@@ -1,0 +1,15 @@
+# ignore cloned subrepos
+flow/
+sumo/
+
+# ignore virtual environments and build artifacts
+flow_env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+*.log
