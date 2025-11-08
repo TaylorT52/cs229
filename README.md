@@ -7,6 +7,8 @@ Need to set up [Flow](https://github.com/flow-project/flow) and [SUMO](https://w
 * macOS or Linux
 * Python 3.8 (via `pyenv`)
 * CMake, make, g++ (for building SUMO)
+* [SUMO](https://github.com/eclipse/sumo) (built from source)
+* [Flow](https://github.com/flow-project/flow) (installed from source)
 
 ## Setup 
 
@@ -100,6 +102,11 @@ If using git submodules, do **not** ignore `sumo/` or `flow/`.
 building on the [Flow](https://github.com/flow-project/flow) traffic simulation library and modifies or pins several key dependencies to ensure compatibility with macOS + Python 3.8
 
 Instead of modifying `flow/requirements.txt`, we define our environment in the top-level `requirements.txt` for reproducibility and clarity.
+
+- `ray==1.9.0` instead of older 0.8.x
+- `redis>=3.5.0,<5.0.0` (to satisfy ray vs Flow requirements)
+- `torch==1.10.0` (instead of 1.4.0 in original Flow)
+- `gym==0.21.0`, `numpy==1.21.6`, `scipy==1.7.3` (newer, stable versions)
 
 To install dependencies:
 
