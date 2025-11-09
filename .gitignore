@@ -1,6 +1,7 @@
 # ignore cloned subrepos
 flow/
 sumo/
+data/
 
 # ignore virtual environments and build artifacts
 flow_env/
@@ -13,3 +14,4 @@ dist/
 build/
 .eggs/
 *.log
+.DS_Store
