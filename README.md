@@ -114,3 +114,46 @@ To install dependencies:
 python -m venv flow_env
 source flow_env/bin/activate
 pip install -r requirements.txt
+
+## Testing the Installation
+
+Once you've built SUMO and installed Flow, you can run a simple built-in simulation to verify everything is working:
+
+```bash
+RENDER=drgb PYTHONPATH=$PWD python flow/examples/simulate.py ring
+```
+
+If everything is set up correctly, a GUI window should appear showing vehicles driving on a ring road. You should see output like:
+
+```
+Simulation started with time: 0.00
+Simulation ended at time: 150.10
+```
+
+## GUI Rendering on macOS
+
+If the SUMO GUI fails to launch due to a display error (`FXApp::openDisplay: unable to open display :0.0`), try:
+
+```bash
+export DISPLAY=:0
+```
+
+May also need to install [XQuartz](https://www.xquartz.org/) and log out / log back in.
+
+## Activating Your Environment Permanently
+
+Automatically activate your `flow_env` virtualenv on shell startup (assuming you're using `zsh` and `pyenv`):
+
+Add this to your `~/.zshrc`:
+
+```bash
+eval "$(pyenv init -)"
+eval "$(pyenv virtualenv-init -)"
+pyenv activate flow_env
+```
+
+Then reload:
+
+```bash
+source ~/.zshrc
+```
