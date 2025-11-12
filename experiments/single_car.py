@@ -27,7 +27,7 @@ vehicles.add(
 # Network parameters - simple straight highway
 additional_net_params = {
     "length": 600, #defines highway length
-    "lanes": 3, 
+    "lanes": 10, 
     "speed_limit": 30,  # 30 m/s speed limit
     "num_edges": 1,     # single edge
     "use_ghost_edge": False, 
@@ -55,6 +55,11 @@ flow_params = dict(
     ),
 
     veh=vehicles,
-    initial=InitialConfig(),
+    initial=InitialConfig(
+        spacing="random", 
+        perturbation=5.0, 
+        lanes_distribution=10,
+        shuffle=True, 
+    ),
 )
 
