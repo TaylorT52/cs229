@@ -19,9 +19,18 @@ from flow.core.experiment import Experiment
 from single_car import flow_params
 
 if __name__ == "__main__":
-    exp = Experiment(flow_params)
+    # Check for --no_render flag
+    import sys
+    if "--no_render" in sys.argv:
+        flow_params['sim'].render = False
+        print("Running without GUI (headless mode)")
+    else:
+        print("Starting simulation with GUI...")
+        print("The SUMO GUI should open shortly.")
     
-    print("Starting simulation with one car...")
-    print("The SUMO GUI should open shortly.")
+    exp = Experiment(flow_params)
+    print(f"Simulating with {flow_params['veh'].num_vehicles} total vehicles")
+    print(f"- {flow_params['veh'].num_rl_vehicles} RL vehicles (red)")
+    print(f"- {flow_params['veh'].num_vehicles - flow_params['veh'].num_rl_vehicles} human vehicles (blue)")
     exp.run(1)
 
