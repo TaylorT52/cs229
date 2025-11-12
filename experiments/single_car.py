@@ -16,11 +16,11 @@ vehicles.add(
 
 # Network parameters - simple straight highway
 additional_net_params = {
-    "length": 500,      # 500m highway
-    "lanes": 3,         # single lane
+    "length": 10000, #defines highway length
+    "lanes": 3, 
     "speed_limit": 30,  # 30 m/s speed limit
     "num_edges": 1,     # single edge
-    "use_ghost_edge": False,  # no ghost edge needed
+    "use_ghost_edge": False, 
     "ghost_speed_limit": 25,
     "boundary_cell_length": 500
 }
@@ -37,7 +37,7 @@ flow_params = dict(
     ),
 
     env=EnvParams(
-        horizon=1500,     # Run for 150 seconds (1500 steps * 0.1s)
+        horizon=1500, # Run for 150 seconds (1500 steps * 0.1s)
     ),
 
     net=NetParams(
