@@ -11,7 +11,7 @@ from ray.tune.registry import register_env
 
 from flow.utils.registry import make_create_env
 
-from .platoon_config import flow_params
+from platoon_config import flow_params
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RESULTS_DIR = os.path.join(PROJECT_ROOT, "results", "independent")

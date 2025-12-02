@@ -10,7 +10,7 @@ from flow.core.params import (
 )
 from flow.networks import HighwayNetwork
 
-from .platoon_env import PlatoonEnv
+from platoon_env import PlatoonEnv
 
 vehicles = VehicleParams()
 vehicles.add(
