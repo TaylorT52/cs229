@@ -117,6 +117,54 @@ class PlatoonEnv(Env):
         self.k.vehicle.apply_acceleration(rl_ids, clipped)
 
     def additional_command(self):
-        """Highlight RL vehicles in red for easier visual debugging."""
+        """Highlight RL vehicles in red and enforce speed limits for realistic traffic."""
+        # Set RL vehicle colors
         for rl_id in self.k.vehicle.get_rl_ids():
             self.k.kernel_api.vehicle.setColor(rl_id, (255, 0, 0, 255))
+        
+        # Enforce speed limits on all vehicles to prevent infinite acceleration
+        max_speed = self.net_params.additional_params.get("speed_limit", 30.0)
+        all_veh_ids = self.k.vehicle.get_ids()
+        
+        for veh_id in all_veh_ids:
+            try:
+                current_speed = self.k.vehicle.get_speed(veh_id)
+                if current_speed is not None and current_speed > max_speed:
+                    # Cap speed at the limit
+                    self.k.kernel_api.vehicle.setMaxSpeed(veh_id, max_speed)
+            except Exception:
+                continue
+        
+        # Wrap vehicles around for continuous traffic flow
+        # When vehicles reach the end, reset their position to the beginning
+        try:
+            highway_length = self.k.network.length()
+            
+            for veh_id in all_veh_ids:
+                try:
+                    pos = self.k.vehicle.get_x_by_id(veh_id)
+                    # If vehicle has passed the end of the highway, wrap it around
+                    if pos is not None and pos >= highway_length - 10.0:  # Wrap before end
+                        # Get current state
+                        lane = self.k.vehicle.get_lane(veh_id)
+                        speed = self.k.vehicle.get_speed(veh_id)
+                        edge = self.k.vehicle.get_edge(veh_id)
+                        
+                        if edge and lane is not None:
+                            # Reset position to beginning of highway
+                            new_pos = max(5.0, (pos - highway_length) % highway_length)
+                            
+                            # Use moveTo to wrap vehicle
+                            self.k.kernel_api.vehicle.moveTo(
+                                veh_id,
+                                edge,
+                                pos=new_pos,
+                                lane=int(lane),
+                                speed=min(speed, max_speed) if speed is not None else 0
+                            )
+                except Exception:
+                    # Skip vehicles that can't be wrapped
+                    continue
+        except Exception:
+            # If wrapping fails, just continue (not critical)
+            pass

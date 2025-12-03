@@ -1,23 +1,18 @@
 """Multi-agent wrapper for IndependentPlatoonEnv to work with RLlib's multi-agent API.
 
-This wrapper converts IndependentPlatoonEnv (which returns flat observations and 
+This wrapper converts IndependentPlatoonEnv (which returns flat observations and
 per-agent reward dicts) into the format expected by RLlib for independent multi-agent learning.
 """
 
 import numpy as np
 from gym.spaces import Box
+from gym.spaces import Dict as GymDict
 from ray.rllib.env.multi_agent_env import MultiAgentEnv as RLlibMultiAgentEnv
 
 from independent_env import IndependentPlatoonEnv
 
 
 class MultiAgentPlatoonEnv(RLlibMultiAgentEnv):
-    """Wrapper that converts IndependentPlatoonEnv to RLlib's multi-agent format.
-    
-    This enables independent PPO training where each RL vehicle is treated
-    as a separate agent with its own policy and receives individual rewards.
-    """
-    
     def __init__(self, env_config):
         """Initialize the multi-agent environment.
         
@@ -46,12 +41,15 @@ class MultiAgentPlatoonEnv(RLlibMultiAgentEnv):
         self.agent_ids = [f"agent_{i}" for i in range(self.num_agents)]
         
         # Store observation and action spaces (same for all agents)
-        self._obs_space = Box(
-            low=-np.inf, 
-            high=np.inf, 
-            shape=(self.num_features,),
-            dtype=np.float32
+        # Each agent receives a dict observation with 'local' and 'global'
+        self._local_space = Box(low=-np.inf, high=np.inf, shape=(self.num_features,), dtype=np.float32)
+        self._global_space = Box(
+            low=-np.inf,
+            high=np.inf,
+            shape=(self.num_agents * self.num_features,),
+            dtype=np.float32,
         )
+        self._obs_space = GymDict({"local": self._local_space, "global": self._global_space})
         self._action_space = Box(
             low=-3.0, 
             high=3.0, 
@@ -67,10 +65,10 @@ class MultiAgentPlatoonEnv(RLlibMultiAgentEnv):
         """
         # Reset the underlying Flow environment
         flat_obs = self.env.reset()
-        
+
         # Split flat observation into per-agent observations
         obs_dict = self._split_observations(flat_obs)
-        
+
         return obs_dict
     
     def step(self, action_dict):
@@ -118,15 +116,19 @@ class MultiAgentPlatoonEnv(RLlibMultiAgentEnv):
             obs_dict: Dictionary mapping agent_id -> observation array of shape (num_features,)
         """
         obs_dict = {}
-        
+
+        # Build a global observation vector (same for all agents)
+        global_obs = np.array(flat_obs, dtype=np.float32)
+
         for i, agent_id in enumerate(self.agent_ids):
             # Extract the features for this agent
             start_idx = i * self.num_features
             end_idx = start_idx + self.num_features
-            agent_obs = flat_obs[start_idx:end_idx]
-            
-            obs_dict[agent_id] = agent_obs
-        
+            agent_local = np.array(flat_obs[start_idx:end_idx], dtype=np.float32)
+
+            # Each agent receives a dict with its local features and the global state
+            obs_dict[agent_id] = {"local": agent_local, "global": global_obs}
+
         return obs_dict
     
     def _flatten_actions(self, action_dict):
@@ -201,7 +203,7 @@ class MultiAgentPlatoonEnv(RLlibMultiAgentEnv):
         return {agent_id: self._action_space for agent_id in agent_ids}
     
     def observation_space_contains(self, x):
-        """Check if observation is valid."""
+        """Check if observation is valid (expects dict per agent)."""
         return all(self._obs_space.contains(obs) for obs in x.values())
     
     def action_space_contains(self, x):

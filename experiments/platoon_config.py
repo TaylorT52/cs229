@@ -17,7 +17,7 @@ vehicles.add(
     veh_id="human",
     acceleration_controller=(IDMController, {}),
     routing_controller=(ContinuousRouter, {}),
-    num_vehicles=18,
+    num_vehicles=40,  # More vehicles for realistic traffic density
     color="0,100,255",
 )
 vehicles.add(
@@ -29,9 +29,9 @@ vehicles.add(
 )
 
 additional_net_params = dict(
-    length=1000,
+    length=2000,  # Longer highway for more realistic flow
     lanes=4,
-    speed_limit=30.0,
+    speed_limit=30.0,  # Enforce speed limit (30 m/s = ~108 km/h)
     num_edges=1,
     use_ghost_edge=False,
     ghost_speed_limit=30.0,
