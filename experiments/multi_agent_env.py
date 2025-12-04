@@ -2,10 +2,12 @@
 
 This wrapper converts IndependentPlatoonEnv (which returns flat observations and 
 per-agent reward dicts) into the format expected by RLlib for independent multi-agent learning.
+
+Supports both independent learning (Box observations) and CTDE (Dict observations with local/global).
 """
 
 import numpy as np
-from gym.spaces import Box
+from gym.spaces import Box, Dict
 from ray.rllib.env.multi_agent_env import MultiAgentEnv as RLlibMultiAgentEnv
 
 from independent_env import IndependentPlatoonEnv
@@ -27,6 +29,8 @@ class MultiAgentPlatoonEnv(RLlibMultiAgentEnv):
                 - sim_params: SumoParams object  
                 - network: Network object
                 - simulator: 'traci' (default)
+                - use_ctde_obs: If True, return Dict observations with "local" and "global" keys (for CTDE)
+                                If False, return Box observations (for independent learning, default)
         """
         super().__init__()
         
@@ -40,7 +44,8 @@ class MultiAgentPlatoonEnv(RLlibMultiAgentEnv):
         
         # Number of RL vehicles (agents)
         self.num_agents = self.env.initial_vehicles.num_rl_vehicles
-        self.num_features = 5  # Features per agent
+        # Features per agent (depends on whether lane changes are enabled)
+        self.num_features = self.env.num_features
         
         # Create agent IDs: "agent_0", "agent_1", ..., "agent_9"
         self.agent_ids = [f"agent_{i}" for i in range(self.num_agents)]
@@ -48,13 +53,34 @@ class MultiAgentPlatoonEnv(RLlibMultiAgentEnv):
         # Check if lane changes are enabled
         self.lane_change_enabled = env_config['env_params'].additional_params.get("lane_change_enabled", False)
         
+        # Check if CTDE observation format should be used
+        self.use_ctde_obs = env_config.get("use_ctde_obs", False)
+        
         # Store observation and action spaces (same for all agents)
-        self._obs_space = Box(
-            low=-np.inf, 
-            high=np.inf, 
-            shape=(self.num_features,),
-            dtype=np.float32
-        )
+        if self.use_ctde_obs:
+            # CTDE: Dict with local and global observations
+            self._obs_space = Dict({
+                "local": Box(
+                    low=-np.inf, 
+                    high=np.inf, 
+                    shape=(self.num_features,),
+                    dtype=np.float32
+                ),
+                "global": Box(
+                    low=-np.inf, 
+                    high=np.inf, 
+                    shape=(self.num_agents * self.num_features,),
+                    dtype=np.float32
+                ),
+            })
+        else:
+            # Independent learning: Box observations
+            self._obs_space = Box(
+                low=-np.inf, 
+                high=np.inf, 
+                shape=(self.num_features,),
+                dtype=np.float32
+            )
         
         # Action space depends on whether lane changes are enabled
         if self.lane_change_enabled:
@@ -128,9 +154,14 @@ class MultiAgentPlatoonEnv(RLlibMultiAgentEnv):
                 Example: [speed_0, headway_0, ..., speed_1, headway_1, ...]
         
         Returns:
-            obs_dict: Dictionary mapping agent_id -> observation array of shape (num_features,)
+            obs_dict: Dictionary mapping agent_id -> observation
+                If use_ctde_obs=True: Dict with "local" and "global" keys
+                If use_ctde_obs=False: Array of shape (num_features,)
         """
         obs_dict = {}
+        
+        # Build global observation (concatenation of all agents' observations)
+        global_obs = flat_obs.copy()
         
         for i, agent_id in enumerate(self.agent_ids):
             # Extract the features for this agent
@@ -138,7 +169,15 @@ class MultiAgentPlatoonEnv(RLlibMultiAgentEnv):
             end_idx = start_idx + self.num_features
             agent_obs = flat_obs[start_idx:end_idx]
             
-            obs_dict[agent_id] = agent_obs
+            if self.use_ctde_obs:
+                # CTDE: Return Dict with local and global observations
+                obs_dict[agent_id] = {
+                    "local": agent_obs,  # Local observation for policy
+                    "global": global_obs  # Global observation for centralized critic
+                }
+            else:
+                # Independent learning: Return Box observation
+                obs_dict[agent_id] = agent_obs
         
         return obs_dict
     

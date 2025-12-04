@@ -1,6 +1,6 @@
 """Flow configuration for the platooning experiment."""
 
-from flow.controllers import IDMController, RLController, ContinuousRouter, SimLaneChangeController
+from flow.controllers import IDMController, RLController, ContinuousRouter
 from flow.core.params import (
     SumoParams,
     EnvParams,
@@ -17,21 +17,20 @@ vehicles.add(
     veh_id="human",
     acceleration_controller=(IDMController, {}),
     routing_controller=(ContinuousRouter, {}),
-    num_vehicles=18,
+    num_vehicles=8,  # Reduced from 18 for better density
     color="0,100,255",
 )
 vehicles.add(
     veh_id="rl",
     acceleration_controller=(RLController, {}),
     routing_controller=(ContinuousRouter, {}),
-    lane_change_controller=(SimLaneChangeController, {}),  # Enable RL-controlled lane changes
     num_vehicles=2,
     color="255,0,0",
 )
 
 additional_net_params = dict(
     length=1000,
-    lanes=4,
+    lanes=4,  # Increased from 2 to 4 lanes
     speed_limit=30.0,
     num_edges=1,
     use_ghost_edge=False,
@@ -45,10 +44,12 @@ additional_net_params = dict(
 
 # Environment parameters with optional lane change support
 env_params = EnvParams(
-    horizon=1500,
+    horizon=3000,  # Increased from 1500 for longer episodes (better for delayed lane-change rewards)
     additional_params={
-        "lane_change_enabled": False,  # Set to True to enable lane changes
-        "lane_change_duration": 5.0,   # Cooldown between lane changes (seconds)
+        # Disable lane-changing for this experiment: focus on longitudinal control only
+        "lane_change_enabled": False,
+        # Kept for compatibility but unused when lane_change_enabled is False
+        "lane_change_duration": 2.0,
     }
 )
 
@@ -63,8 +64,8 @@ flow_params = dict(
     veh=vehicles,
     initial=InitialConfig(
         spacing="uniform",
-        perturbation=1.0,
-        lanes_distribution=float("inf"),
-        shuffle=False,
+        perturbation=2.0,  # Increased from 1.0 to spread vehicles more
+        lanes_distribution=float("inf"),  # Allow vehicles to start in any lane
+        shuffle=True,  # Shuffle to randomize initial positions
     ),
 )

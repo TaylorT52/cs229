@@ -23,6 +23,7 @@ from flow.networks import HighwayNetwork
 from flow.core.params import SumoCarFollowingParams
 from multi_agent_env import MultiAgentPlatoonEnv
 from platoon_config import flow_params
+from metrics_collector import MetricsCollector
 
 
 def find_latest_checkpoint(results_dir=None):
@@ -300,7 +301,7 @@ def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=
         }),
         routing_controller=(ContinuousRouter, {}),
         car_following_params=human_cf_params,
-        num_vehicles=10,  # Fewer initial vehicles - inflow will add more
+        num_vehicles=5,  # Fewer initial vehicles - reduced to prevent initial congestion
         color="0,100,255",
     )
     vis_vehicles.add(
@@ -319,7 +320,7 @@ def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=
     inflows.add(
         veh_type="human",
         edge="highway_0",
-        vehs_per_hour=1800,  # ~0.5 vehicles per second (realistic traffic density)
+        vehs_per_hour=1200,  # Reduced from 1800 to prevent congestion (~0.33 vehicles per second)
         depart_speed="max",  # Use new parameter name (departSpeed is deprecated)
         depart_lane="random",  # Use new parameter name (departLane is deprecated)
         begin=1,  # Must be >= 1 second (Flow requirement)
@@ -329,7 +330,7 @@ def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=
     inflows.add(
         veh_type="rl",
         edge="highway_0",
-        vehs_per_hour=540,  # ~30% of human flow (0.15 vehicles per second)
+        vehs_per_hour=360,  # Reduced from 540 (~0.1 vehicles per second)
         depart_speed="max",
         depart_lane="random",
         begin=1,
@@ -397,8 +398,8 @@ def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=
     print("=" * 60)
     print(f"Initial RL vehicles (red): {env.num_agents}")
     print(f"Initial human vehicles (blue): {vis_vehicles.num_vehicles - env.num_agents}")
-    print(f"Human vehicle inflow: 1800 veh/hour (~0.5 veh/sec)")
-    print(f"RL vehicle inflow: 540 veh/hour (~0.15 veh/sec, 30% of human flow)")
+    print(f"Human vehicle inflow: 1200 veh/hour (~0.33 veh/sec)")
+    print(f"RL vehicle inflow: 360 veh/hour (~0.1 veh/sec, 30% of human flow)")
     print(f"Highway length: {vis_flow_params['net'].additional_params['length']:.0f}m")
     print(f"Render mode: {'ON' if render else 'OFF'}")
     print(f"Episodes: {num_episodes}")
@@ -420,11 +421,18 @@ def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=
     
     total_rewards = []
     
+    # Initialize metrics collector
+    metrics_collector = MetricsCollector(policy_type="independent")
+    
     try:
         for episode in range(num_episodes):
             obs_dict = env.reset()
             done_dict = {"__all__": False}
             episode_reward = {agent_id: 0.0 for agent_id in env.agent_ids}
+            
+            # Reset metrics collector for new episode
+            if episode > 0:
+                metrics_collector = MetricsCollector(policy_type="independent")
             
             # Set vehicle colors explicitly for visibility
             rl_ids = env.env.k.vehicle.get_rl_ids()
@@ -457,6 +465,10 @@ def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=
                 # Step environment
                 # New RL vehicles from inflow will automatically be included in obs_dict
                 obs_dict, reward_dict, done_dict, info_dict = env.step(action_dict)
+                
+                # Collect metrics for this step
+                current_time = step * 0.1  # Simulation time in seconds
+                metrics_collector.collect_step(env, action_dict, reward_dict, step, current_time)
                 
                 # Check if environment says it's done, but continue anyway for visualization
                 # (unless it's a crash or user interruption)
@@ -558,6 +570,63 @@ def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=
         print("\nSimulation ended")
         if total_rewards:
             print(f"Average reward across episodes: {np.mean(total_rewards):.2f}")
+        
+        # Compute and save metrics
+        print("\n" + "=" * 60)
+        print("Computing Metrics...")
+        print("=" * 60)
+        
+        all_metrics = metrics_collector.compute_all_metrics()
+        
+        # Print summary
+        print("\n📊 Metrics Summary:")
+        print(f"  Policy Type: {all_metrics['policy_type']}")
+        
+        spacing = all_metrics.get('spacing_stability', {})
+        if spacing:
+            print(f"  Avg Spacing Variance: {spacing.get('avg_spacing_variance', 0):.4f}")
+            print(f"  Avg Oscillation Amplitude: {spacing.get('avg_oscillation_amplitude', 0):.4f}")
+            print(f"  Avg Damping Ratio: {spacing.get('avg_damping_ratio', 0):.4f}")
+        
+        efficiency = all_metrics.get('efficiency', {})
+        if efficiency:
+            print(f"  Avg Velocity: {efficiency.get('avg_platoon_velocity', 0):.2f} m/s")
+            print(f"  Speed Variance: {efficiency.get('speed_variance', 0):.4f}")
+            print(f"  Throughput: {efficiency.get('throughput_vehicles_per_second', 0):.4f} veh/s")
+        
+        safety = all_metrics.get('safety', {})
+        if safety:
+            print(f"  Collisions: {safety.get('collision_count', 0)}")
+            print(f"  Near Collisions: {safety.get('near_collision_count', 0)}")
+            min_ttc = safety.get('min_time_to_collision')
+            if min_ttc:
+                print(f"  Min TTC: {min_ttc:.2f} s")
+        
+        coordination = all_metrics.get('coordination', {})
+        if coordination:
+            print(f"  Action Correlation: {coordination.get('action_correlation', 0):.4f}")
+            print(f"  Policy Divergence: {coordination.get('policy_divergence', 0):.4f}")
+            print(f"  Synchronization Index: {coordination.get('synchronization_index', 0):.4f}")
+        
+        string_stab = all_metrics.get('string_stability', {})
+        if string_stab:
+            print(f"  String Stability Ratio: {string_stab.get('string_stability_ratio', 1.0):.4f}")
+            print(f"  Is String Stable: {string_stab.get('is_string_stable', False)}")
+        
+        # Save metrics to file
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        metrics_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "metrics")
+        os.makedirs(metrics_dir, exist_ok=True)
+        
+        metrics_file = os.path.join(metrics_dir, f"independent_metrics_{timestamp}.json")
+        raw_data_file = os.path.join(metrics_dir, f"independent_raw_data_{timestamp}.csv")
+        
+        metrics_collector.save_metrics(metrics_file)
+        metrics_collector.save_raw_data(raw_data_file)
+        
+        print(f"\n✅ Metrics saved to:")
+        print(f"   {metrics_file}")
+        print(f"   {raw_data_file}")
 
 
 def main():

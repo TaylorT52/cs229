@@ -34,7 +34,19 @@ def main():
     ray.init(ignore_reinit_error=True, include_dashboard=False, log_to_driver=False)
 
     obs_space = Box(low=-np.inf, high=np.inf, shape=(5,), dtype=np.float32)
-    act_space = Box(low=-3.0, high=3.0, shape=(1,), dtype=np.float32)
+    
+    # Check if lane changes are enabled
+    lane_change_enabled = params["env"].additional_params.get("lane_change_enabled", False)
+    if lane_change_enabled:
+        # Actions: [accel, lane_change] per agent
+        act_space = Box(
+            low=np.array([-3.0, -1.0], dtype=np.float32),
+            high=np.array([3.0, 1.0], dtype=np.float32),
+            dtype=np.float32
+        )
+    else:
+        # Just acceleration
+        act_space = Box(low=-3.0, high=3.0, shape=(1,), dtype=np.float32)
 
     num_agents = params["veh"].num_rl_vehicles
     policies = {

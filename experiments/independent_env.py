@@ -19,10 +19,16 @@ class IndependentPlatoonEnv(PlatoonEnv):
     """
 
     def compute_reward(self, rl_actions, **kwargs):
-        """Compute individual rewards for each RL vehicle.
+        """Stage-1 reward: simple longitudinal control without lane changing.
 
-        Rewards mirror the shaping used in PlatoonEnv but are reported
-        per-agent so policies can be trained independently.
+        Focus (throughput-oriented):
+        - Strongly reward sustained high speed (throughput)
+        - Mild, per-step cost for being below ~70% of target speed
+        - Weaker penalties for small headways (safety still enforced, but softer)
+        - Very small smoothness penalty on large accelerations
+
+        This is intentionally simpler and less harsh than the full platooning
+        reward used in the single-agent environment.
         """
         rl_ids = self.k.vehicle.get_rl_ids()
         if len(rl_ids) == 0:
@@ -35,37 +41,48 @@ class IndependentPlatoonEnv(PlatoonEnv):
             headway = self._safe_headway(rl_id)
 
             agent_reward = 0.0
-            agent_bonus = 0.0
 
-            speed_error = abs(speed - self.target_speed)
-            speed_reward = -speed_error / max(self.target_speed, 1e-3)
-            agent_reward += 0.3 * speed_reward
+            # 1) Reward moving near target speed (normalized to [0, 1])
+            speed_norm = speed / max(self.target_speed, 1e-3)
+            speed_norm_clipped = max(0.0, min(speed_norm, 1.0))
+            # Prefer high sustained speeds (throughput)
+            agent_reward += 2.0 * speed_norm_clipped
 
-            platoon_reward = 0.0
+            # 2) Penalty for being very slow / near-stop (keep but soften)
+            if speed < 0.5:
+                # Strong penalty for essentially stopped vehicles
+                agent_reward -= 3.0
+            elif speed < 0.3 * self.target_speed:
+                # Linearly increasing penalty as speed drops below 30% of target
+                slow_frac = 1.0 - speed / max(0.3 * self.target_speed, 1e-3)
+                agent_reward -= 1.0 * slow_frac
+
+            # 2b) Mild per-step cost for being below ~70% of target speed
+            if speed < 0.7 * self.target_speed:
+                deficit = 0.7 * self.target_speed - speed
+                deficit_frac = deficit / max(0.7 * self.target_speed, 1e-3)
+                agent_reward -= 0.5 * deficit_frac
+
+            # 3) Safety: penalize very small headways only (keep simple)
             if headway is not None:
-                if 10.0 <= headway <= 30.0:
-                    platoon_reward = 1.0
-                    agent_bonus = 1.0
-                elif headway > 30.0:
-                    platoon_reward = max(-0.5, -0.01 * (headway - 30.0))
-                else:
-                    platoon_reward = 0.0
-            agent_reward += 0.3 * platoon_reward
+                if headway < 3.0:
+                    # Extremely close: strong penalty (but weaker than before)
+                    close_frac = (3.0 - headway) / 3.0
+                    agent_reward -= 1.0 * min(close_frac, 1.0)
+                elif headway < 6.0:
+                    # Moderately too close: mild penalty
+                    close_frac = (6.0 - headway) / 3.0
+                    agent_reward -= 0.2 * min(close_frac, 1.0)
 
+            # 4) Smoothness: very small penalty on large accelerations
             if rl_id in self.prev_speeds:
                 prev_speed = self.prev_speeds[rl_id]
-                speed_change = abs(speed - prev_speed)
-                if speed_change > 2.0:
-                    agent_reward += 0.2 * (-speed_change / 10.0)
+                accel = speed - prev_speed
+                if abs(accel) > 2.0:
+                    jerk_frac = (abs(accel) - 2.0) / 3.0
+                    agent_reward -= 0.1 * min(jerk_frac, 1.0)
             self.prev_speeds[rl_id] = speed
 
-            if headway is not None:
-                if headway < 5.0:
-                    agent_reward += 0.1 * (-1.0 * min(1.0, (5.0 - headway) / 5.0))
-                elif headway < 8.0:
-                    agent_reward += 0.1 * (-1.0 * (8.0 - headway) / 3.0)
-
-            agent_reward += agent_bonus
             rewards[rl_id] = agent_reward
 
         return rewards
