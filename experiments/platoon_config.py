@@ -1,5 +1,3 @@
-"""Flow configuration for the platooning experiment."""
-
 from flow.controllers import IDMController, RLController, ContinuousRouter, SimLaneChangeController
 from flow.core.params import (
     SumoParams,
@@ -17,21 +15,21 @@ vehicles.add(
     veh_id="human",
     acceleration_controller=(IDMController, {}),
     routing_controller=(ContinuousRouter, {}),
-    num_vehicles=18,
+    num_vehicles=8,
     color="0,100,255",
 )
 vehicles.add(
     veh_id="rl",
     acceleration_controller=(RLController, {}),
     routing_controller=(ContinuousRouter, {}),
-    lane_change_controller=(SimLaneChangeController, {}),  # Enable RL-controlled lane changes
+    lane_change_controller=(SimLaneChangeController, {}),
     num_vehicles=2,
     color="255,0,0",
 )
 
 additional_net_params = dict(
     length=1000,
-    lanes=4,
+    lanes=4,  # Increased from 2 to 4 lanes
     speed_limit=30.0,
     num_edges=1,
     use_ghost_edge=False,
@@ -39,16 +37,12 @@ additional_net_params = dict(
     boundary_cell_length=500,
 )
 
-# Note: Collision parameters are set via TraCI in the visualization script
-# This prevents SUMO from teleporting vehicles on collisions/overlaps
-# which corrupts RL state and rewards
-
-# Environment parameters with optional lane change support
+#lane change support
 env_params = EnvParams(
-    horizon=1500,
+    horizon=3000,
     additional_params={
-        "lane_change_enabled": True,  # Set to True to enable lane changes
-        "lane_change_duration": 5.0,   # Cooldown between lane changes (seconds)
+        "lane_change_enabled": True,
+        "lane_change_duration": 5.0,
     }
 )
 
@@ -63,8 +57,8 @@ flow_params = dict(
     veh=vehicles,
     initial=InitialConfig(
         spacing="uniform",
-        perturbation=1.0,
+        perturbation=2.0,
         lanes_distribution=float("inf"),
-        shuffle=False,
+        shuffle=True,
     ),
 )

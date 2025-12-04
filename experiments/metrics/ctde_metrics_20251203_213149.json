@@ -1,0 +1,47 @@
+{
+  "policy_type": "ctde",
+  "spacing_stability": {
+    "spacing_variance_per_vehicle": {
+      "rl_0": 85546.34050552487
+    },
+    "avg_spacing_variance": 85546.34050552487,
+    "oscillation_amplitude_per_vehicle": {
+      "rl_0": 1712.1540497856463
+    },
+    "avg_oscillation_amplitude": 1712.1540497856463,
+    "damping_ratio_per_vehicle": [],
+    "avg_damping_ratio": 1.0
+  },
+  "efficiency": {
+    "avg_platoon_velocity": 0.39444487268748607,
+    "speed_variance": 4.327176922522674,
+    "throughput_vehicles_per_second": 0.9375,
+    "total_vehicles": 3,
+    "total_time": 3.2
+  },
+  "safety": {
+    "collision_count": 0,
+    "near_collision_count": 0,
+    "min_time_to_collision": 210.24374504615758,
+    "max_deceleration": -0.7538735270500185,
+    "collision_details": []
+  },
+  "coordination": {
+    "action_correlation": -0.18555812851085357,
+    "action_correlations_all_pairs": [
+      -0.18555812851085357
+    ],
+    "policy_divergence": 0.05971525911618957,
+    "synchronization_index": 0.5902724451032907
+  },
+  "string_stability": {
+    "string_stability_ratio": 1.0,
+    "is_string_stable": false,
+    "string_stability_ratios_all_pairs": []
+  },
+  "summary": {
+    "total_steps": 33,
+    "total_time": 3.2,
+    "collision_count": 0
+  }
+}
