@@ -1,0 +1,19 @@
+{
+  "policy_type": "ctde",
+  "spacing_stability": {},
+  "efficiency": {},
+  "safety": {
+    "collision_count": 0,
+    "near_collision_count": 0,
+    "min_time_to_collision": null,
+    "max_deceleration": 0.0,
+    "collision_details": []
+  },
+  "coordination": {},
+  "string_stability": {},
+  "summary": {
+    "total_steps": 0,
+    "total_time": 0.0,
+    "collision_count": 0
+  }
+}

@@ -578,8 +578,17 @@ class PlatoonEnv(Env):
                 # If vehicle changed lanes recently, prevent new lane change
                 if time_since_lc < self.lane_change_duration:
                     lane_changes[i] = 0.0
-                # If lane change is being performed, record it
                 elif lane_changes[i] != 0:  # Non-zero means lane change attempted
+                    # Prevent immediate oscillation: block reversing direction too soon
+                    last_dir = self.last_lane_change_direction.get(veh_id, 0)
+                    if (
+                        last_dir != 0
+                        and lane_changes[i] != last_dir
+                        and time_since_lc < self.lane_change_duration * 1.5
+                    ):
+                        lane_changes[i] = 0.0
+                        continue
+
                     # Store speed before lane change to reward improvements
                     try:
                         self.prev_speeds_before_lc[veh_id] = self.k.vehicle.get_speed(veh_id)

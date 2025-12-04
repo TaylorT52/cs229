@@ -1,6 +1,6 @@
 """Flow configuration for the platooning experiment."""
 
-from flow.controllers import IDMController, RLController, ContinuousRouter
+from flow.controllers import IDMController, RLController, ContinuousRouter, SimLaneChangeController
 from flow.core.params import (
     SumoParams,
     EnvParams,
@@ -24,6 +24,8 @@ vehicles.add(
     veh_id="rl",
     acceleration_controller=(RLController, {}),
     routing_controller=(ContinuousRouter, {}),
+    # Enable RL-controlled lane changes
+    lane_change_controller=(SimLaneChangeController, {}),
     num_vehicles=2,
     color="255,0,0",
 )
@@ -46,9 +48,9 @@ additional_net_params = dict(
 env_params = EnvParams(
     horizon=3000,  # Increased from 1500 for longer episodes (better for delayed lane-change rewards)
     additional_params={
-        # Disable lane-changing for this experiment: focus on longitudinal control only
-        "lane_change_enabled": False,
-        # Kept for compatibility but unused when lane_change_enabled is False
+        # Enable lane-changing: CTDE policy controls both acceleration and lane changes
+        "lane_change_enabled": True,
+        # Cooldown between lane changes (seconds)
         "lane_change_duration": 2.0,
     }
 )

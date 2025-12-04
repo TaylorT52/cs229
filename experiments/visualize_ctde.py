@@ -251,13 +251,13 @@ def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=
     """
     # Create a copy of flow_params with realistic parameters for visualization
     from copy import deepcopy
-    from flow.controllers import IDMController, RLController, ContinuousRouter
+    from flow.controllers import IDMController, RLController, ContinuousRouter, SimLaneChangeController
     from flow.core.params import VehicleParams
     
     vis_flow_params = deepcopy(flow_params)
     
-    # For this run, keep lane changes DISABLED to match training configuration
-    vis_flow_params["env"].additional_params["lane_change_enabled"] = False
+    # For this run, enable lane changes to match CTDE lane-changing training
+    vis_flow_params["env"].additional_params["lane_change_enabled"] = True
     
     if horizon is None:
         horizon = 10000  # Much longer than default 1500
@@ -329,7 +329,8 @@ def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=
         veh_id="rl",
         acceleration_controller=(RLController, {}),
         routing_controller=(ContinuousRouter, {}),
-        # No lane_change_controller: longitudinal control only, to match training
+        # RL controls lane changes during visualization as well
+        lane_change_controller=(SimLaneChangeController, {}),
         car_following_params=rl_cf_params,
         num_vehicles=flow_params["veh"].num_rl_vehicles,
         color="255,0,0",
