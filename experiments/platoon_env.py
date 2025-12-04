@@ -75,38 +75,56 @@ class PlatoonEnv(Env):
         )
 
     def _safe_headway(self, veh_id):
-        """Compute headway with modular arithmetic for circular roads.
+        """Compute headway to closest vehicle ahead (ANY lane, not just same lane).
         
-        This fixes the wraparound issue where positions jump from 999.8m to 0.2m,
-        which would give negative headway. Uses modular distance calculation.
+        SUMO's get_headway() is lane-specific, which causes problems when vehicles
+        spread across lanes. This function finds the closest vehicle ahead regardless
+        of lane, enabling proper platooning rewards even in multi-lane scenarios.
         """
+        # First try the standard same-lane headway
         headway = self.k.vehicle.get_headway(veh_id)
-        if headway is None or headway < 0:  # no leader or invalid reading
-            return 999.0
         
-        # Get road length for modular calculation (if using circular/ring road)
-        road_length = self.net_params.additional_params.get("length", 1000.0)
+        # If we have a valid same-lane headway, use it
+        if headway is not None and 0 < headway < 500:
+            return headway
         
-        # Check if this is a circular road (ring network)
-        # For now, assume HighwayNetwork is straight, but handle wraparound if positions wrap
-        # If headway seems too large (likely wraparound artifact), compute modular distance
-        if headway > road_length * 0.5:
-            # Likely wraparound: compute modular distance manually
-            try:
-                pos_follower = self.k.vehicle.get_position(veh_id)
-                leader = self.k.vehicle.get_leader(veh_id)
-                if leader:
-                    pos_leader = self.k.vehicle.get_position(leader)
-                    # Modular distance: (pos_leader - pos_follower) % road_length
-                    # But handle negative case
-                    delta = pos_leader - pos_follower
-                    if delta < 0:
-                        delta += road_length
-                    return delta
-            except:
-                pass
-        
-        return headway
+        # No same-lane leader - find closest vehicle ahead in ANY lane
+        try:
+            my_pos = self.k.vehicle.get_position(veh_id)
+            if my_pos is None:
+                return 100.0  # Default when position unknown
+            
+            road_length = self.net_params.additional_params.get("length", 1000.0)
+            min_headway = 999.0
+            
+            # Check all vehicles (RL and human) to find closest ahead
+            all_vehicles = self.k.vehicle.get_ids()
+            for other_id in all_vehicles:
+                if other_id == veh_id:
+                    continue
+                
+                other_pos = self.k.vehicle.get_position(other_id)
+                if other_pos is None:
+                    continue
+                
+                # Calculate distance ahead (handle wraparound for circular roads)
+                delta = other_pos - my_pos
+                if delta < 0:
+                    delta += road_length  # Wraparound
+                
+                # Only consider vehicles ahead (delta > 0 and < road_length/2)
+                if 0 < delta < road_length * 0.5:
+                    min_headway = min(min_headway, delta)
+            
+            # Return the minimum headway found, or a reasonable default
+            if min_headway < 500:
+                return min_headway
+            else:
+                return 100.0  # No vehicle ahead - give neutral headway
+                
+        except Exception as e:
+            # Fallback to a reasonable default
+            return 100.0
 
     def get_state(self):
         """Return concatenated observations for every RL vehicle.

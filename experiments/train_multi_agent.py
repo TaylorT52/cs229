@@ -1,9 +1,3 @@
-"""Train independent PPO policies for multi-agent platooning.
-
-Each RL vehicle gets its own policy and reward signal, enabling
-comparison of independent learning against the joint controller.
-"""
-
 import copy
 import os
 import numpy as np
@@ -33,25 +27,17 @@ def main():
 
     ray.init(ignore_reinit_error=True, include_dashboard=False, log_to_driver=False)
 
-    # Check if lane changes are enabled to determine observation space
     lane_change_enabled = params["env"].additional_params.get("lane_change_enabled", False)
+    obs_space = Box(low=-np.inf, high=np.inf, shape=(5,), dtype=np.float32) 
+
     if lane_change_enabled:
-        num_features = 18  # 9 longitudinal + 9 lateral
-    else:
-        num_features = 9  # 9 longitudinal features only
-    
-    obs_space = Box(low=-np.inf, high=np.inf, shape=(num_features,), dtype=np.float32)
-    
-    # Check if lane changes are enabled
-    if lane_change_enabled:
-        # Actions: [accel, lane_change] per agent
         act_space = Box(
             low=np.array([-3.0, -1.0], dtype=np.float32),
             high=np.array([3.0, 1.0], dtype=np.float32),
             dtype=np.float32
         )
+        print("Lane changes enabled")
     else:
-        # Just acceleration
         act_space = Box(low=-3.0, high=3.0, shape=(1,), dtype=np.float32)
 
     num_agents = params["veh"].num_rl_vehicles
