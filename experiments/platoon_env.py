@@ -20,9 +20,11 @@ class PlatoonEnv(Env):
         self.last_lane_change = {}  # Track last lane change time for each vehicle
         self.last_lane_change_direction = {}  # Track last direction to prevent oscillation
         # Smoothing for lane change actions (exponential moving average)
-        self.lane_change_smoothing = 0.6  # Balanced: responsive but stable
+        self.lane_change_smoothing = 0.75  # More smoothing to reduce twitchiness
         self.smoothed_lane_changes = {}  # Track smoothed lane change values
         self.prev_speeds_before_lc = {}  # Track speed before lane change to reward improvements
+        self.lane_change_count = {}  # Track number of lane changes in recent window (for oscillation penalty)
+        self.lane_change_window_start = {}  # Track when the counting window started
         
         # Number of features per agent
         # Base features (always used):
@@ -46,6 +48,8 @@ class PlatoonEnv(Env):
         self.last_lane_change_direction.clear()
         self.smoothed_lane_changes.clear()
         self.prev_speeds_before_lc.clear()
+        self.lane_change_count.clear()
+        self.lane_change_window_start.clear()
         return super().reset()
 
     @property
@@ -546,24 +550,25 @@ class PlatoonEnv(Env):
                 last_direction = self.last_lane_change_direction.get(veh_id, 0)
                 
                 # Hysteresis: different thresholds for turning on vs off
+                # Tighter thresholds to reduce twitchiness
                 if last_direction == 0:  # Currently no lane change
-                    # Need stronger signal to start lane change
-                    if current_smoothed > 0.2:  # Right
+                    # Need MUCH stronger signal to start lane change (reduces twitchiness)
+                    if current_smoothed > 0.35:  # Right - increased from 0.2
                         lane_changes_discrete[i] = 1
-                    elif current_smoothed < -0.2:  # Left
+                    elif current_smoothed < -0.35:  # Left - increased from -0.2
                         lane_changes_discrete[i] = -1
                 else:  # Currently changing lanes
                     # Need weaker signal to continue, but stronger opposite to reverse
                     if last_direction == 1:  # Was going right
-                        if current_smoothed > 0.05:  # Continue right
+                        if current_smoothed > 0.1:  # Continue right - increased from 0.05
                             lane_changes_discrete[i] = 1
-                        elif current_smoothed < -0.25:  # Strong opposite to reverse
+                        elif current_smoothed < -0.4:  # Strong opposite to reverse - increased from -0.25
                             lane_changes_discrete[i] = -1
                         # Otherwise stays 0 (stop lane change)
                     elif last_direction == -1:  # Was going left
-                        if current_smoothed < -0.05:  # Continue left
+                        if current_smoothed < -0.1:  # Continue left - increased from -0.05
                             lane_changes_discrete[i] = -1
-                        elif current_smoothed > 0.25:  # Strong opposite to reverse
+                        elif current_smoothed > 0.4:  # Strong opposite to reverse - increased from 0.25
                             lane_changes_discrete[i] = 1
                         # Otherwise stays 0 (stop lane change)
             
@@ -604,6 +609,14 @@ class PlatoonEnv(Env):
                             # Only prevent if extremely close (< 2.0m) - more permissive
                             if headway is not None and headway < 2.0:
                                 lane_changes[i] = 0.0
+                        
+                        # Prevent lane changes near the end of the highway (unnecessary)
+                        road_length = self.net_params.additional_params.get("length", 1000.0)
+                        vehicle_position = self.k.vehicle.get_position(veh_id)
+                        distance_to_end = road_length - vehicle_position
+                        # Disable lane changes within last 150m of highway
+                        if distance_to_end < 150.0:
+                            lane_changes[i] = 0.0
                     except:
                         # If we can't check, allow the lane change attempt
                         pass
@@ -618,6 +631,11 @@ class PlatoonEnv(Env):
                     # Record the attempt (SUMO will handle the actual lane change)
                     self.last_lane_change[veh_id] = current_time
                     self.last_lane_change_direction[veh_id] = int(lane_changes[i])
+                    # Track lane change count for oscillation penalty
+                    if veh_id not in self.lane_change_window_start:
+                        self.lane_change_window_start[veh_id] = current_time
+                        self.lane_change_count[veh_id] = 0
+                    self.lane_change_count[veh_id] = self.lane_change_count.get(veh_id, 0) + 1
                 else:
                     # If no lane change, check if we've been in cooldown long enough to reset direction
                     if veh_id in self.last_lane_change:

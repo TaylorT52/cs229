@@ -48,8 +48,44 @@ class IndependentPlatoonEnv(PlatoonEnv):
             is_slow_leader = (
                 leader_speed is not None and leader_speed < 0.7 * self.target_speed
             )
+            # Check if leader is an RL car (should change lanes to avoid)
+            is_rl_leader = leader in rl_ids if leader else False
+            
+            # Detect slow chain: check if there are multiple slow cars ahead
+            slow_chain_length = 0
+            if leader and is_slow_leader:
+                slow_chain_length = 1
+                # Check up to 3 cars ahead
+                current_leader = leader
+                for _ in range(3):
+                    next_leader = self.k.vehicle.get_leader(current_leader)
+                    if next_leader:
+                        next_leader_speed = self.k.vehicle.get_speed(next_leader)
+                        if next_leader_speed < 0.7 * self.target_speed:
+                            slow_chain_length += 1
+                            current_leader = next_leader
+                        else:
+                            break
+                    else:
+                        break
+            is_in_slow_chain = slow_chain_length >= 2  # At least 2 slow cars ahead
 
             agent_reward = 0.0
+            
+            # Penalty for frequent lane changes (oscillation)
+            if rl_id in self.lane_change_count:
+                window_start = self.lane_change_window_start.get(rl_id, self.time_counter)
+                window_duration = self.time_counter - window_start
+                if window_duration > 10.0:  # 10 second window
+                    # Reset window
+                    self.lane_change_count[rl_id] = 0
+                    self.lane_change_window_start[rl_id] = self.time_counter
+                else:
+                    # Penalize if too many lane changes in short time
+                    lc_count = self.lane_change_count[rl_id]
+                    if lc_count >= 3:  # 3+ lane changes in 10 seconds = oscillation
+                        oscillation_penalty = 0.3 * (lc_count - 2)  # Escalating penalty
+                        agent_reward -= oscillation_penalty
 
             # 1) Reward moving near target speed (normalized to [0, 1])
             speed_norm = speed / max(self.target_speed, 1e-3)
@@ -91,9 +127,23 @@ class IndependentPlatoonEnv(PlatoonEnv):
                 agent_reward += 1.0 * min(max(free_speed_bonus, 0.0), 1.0)
 
             # Penalty for lingering behind a slow leader in close proximity
+            # Stronger penalty if leader is an RL car (should change lanes!)
+            # MUCH stronger if in a slow chain (multiple slow cars ahead)
             if is_slow_leader and headway is not None and headway < 20.0:
                 stuck_frac = (20.0 - headway) / 20.0
-                agent_reward -= 0.5 * min(stuck_frac, 1.0)
+                base_penalty = 0.5 * min(stuck_frac, 1.0)
+                # Escalate penalty based on situation
+                if is_in_slow_chain:
+                    # In a slow chain: VERY strong incentive to change lanes
+                    chain_multiplier = 1.0 + (slow_chain_length - 1) * 0.5  # Escalates with chain length
+                    if is_rl_leader:
+                        agent_reward -= 4.0 * base_penalty * chain_multiplier  # Extremely strong
+                    else:
+                        agent_reward -= 2.0 * base_penalty * chain_multiplier
+                elif is_rl_leader:
+                    agent_reward -= 2.0 * base_penalty  # Much stronger incentive to change lanes
+                else:
+                    agent_reward -= base_penalty
 
             # Synchronization reward: encourage matching other RL speeds
             if avg_rl_speed > 0:
@@ -122,18 +172,57 @@ class IndependentPlatoonEnv(PlatoonEnv):
                     agent_reward -= 0.05 * min(jerk_frac, 1.0)
             self.prev_speeds[rl_id] = speed
 
+            # Penalty for lane changes near the end of the highway (unnecessary)
+            try:
+                road_length = self.net_params.additional_params.get("length", 1000.0)
+                vehicle_position = self.k.vehicle.get_position(rl_id)
+                distance_to_end = road_length - vehicle_position
+                # Strong penalty for lane changes within last 150m
+                if distance_to_end < 150.0 and rl_id in self.last_lane_change:
+                    time_since_lc = self.time_counter - self.last_lane_change[rl_id]
+                    if time_since_lc < 3.0:  # Recent lane change near end
+                        end_penalty = 1.0 * (1.0 - distance_to_end / 150.0)  # Stronger closer to end
+                        agent_reward -= end_penalty
+            except:
+                pass
+
             # Reward lane changes that actually improve speed; penalize the opposite.
-            if rl_id in self.last_lane_change and rl_id in self.prev_speeds_before_lc:
+            if rl_id in self.last_lane_change:
                 time_since_lc = self.time_counter - self.last_lane_change[rl_id]
+
+                # Reward sustained lateral success (greater headway or no slow leader)
                 if time_since_lc < 5.0:
-                    prev_speed_before_lc = self.prev_speeds_before_lc[rl_id]
-                    speed_gain = speed - prev_speed_before_lc
-                    if speed_gain > 0.5:
-                        agent_reward += 0.6 * min(speed_gain / 5.0, 1.0)
-                    elif speed_gain < -0.2:
-                        agent_reward -= 0.4 * min(abs(speed_gain) / 3.0, 1.0)
-                # Consume the stored value so it only contributes once
-                del self.prev_speeds_before_lc[rl_id]
+                    if (headway is None or headway > 25.0) or not is_slow_leader:
+                        # Base reward for successful lane change
+                        lc_reward = 0.3
+                        # Extra bonus if we're NOT stuck behind a slow RL leader (escaped!)
+                        if not is_rl_leader or not is_slow_leader:
+                            lc_reward += 0.8  # Strong reward for escaping slow RL car
+                        # HUGE bonus if we escaped a slow chain
+                        if not is_in_slow_chain:
+                            lc_reward += 1.2  # Very strong reward for escaping slow chain
+                        agent_reward += lc_reward
+                    elif is_slow_leader and headway is not None and headway < 12.0:
+                        # Penalty if lane change didn't help (still stuck)
+                        penalty = 0.3
+                        if is_rl_leader:
+                            penalty *= 2.0  # Much worse if still stuck behind RL car
+                        agent_reward -= penalty
+
+                if rl_id in self.prev_speeds_before_lc:
+                    if time_since_lc < 5.0:
+                        prev_speed_before_lc = self.prev_speeds_before_lc[rl_id]
+                        speed_gain = speed - prev_speed_before_lc
+                        if speed_gain > 0.5:
+                            base_gain_reward = 0.6 * min(speed_gain / 5.0, 1.0)
+                            # Extra reward if we gained speed and are no longer stuck behind RL
+                            if not is_rl_leader or not is_slow_leader:
+                                base_gain_reward *= 1.5
+                            agent_reward += base_gain_reward
+                        elif speed_gain < -0.2:
+                            agent_reward -= 0.4 * min(abs(speed_gain) / 3.0, 1.0)
+                    # Consume the stored value so it only contributes once
+                    del self.prev_speeds_before_lc[rl_id]
 
             rewards[rl_id] = agent_reward
 

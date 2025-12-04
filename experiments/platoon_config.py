@@ -50,8 +50,8 @@ env_params = EnvParams(
     additional_params={
         # Enable lane-changing: CTDE policy controls both acceleration and lane changes
         "lane_change_enabled": True,
-        # Cooldown between lane changes (seconds)
-        "lane_change_duration": 2.0,
+        # Cooldown between lane changes (seconds) - increased to reduce twitchiness
+        "lane_change_duration": 5.0,
     }
 )
 
