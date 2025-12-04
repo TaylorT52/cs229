@@ -146,12 +146,24 @@ def load_trained_model(checkpoint_path, checkpoint_num=None):
         shape=(5,),
         dtype=np.float32
     )
-    act_space = Box(
-        low=-3.0, 
-        high=3.0, 
-        shape=(1,),
-        dtype=np.float32
-    )
+    
+    # Check if lane changes are enabled
+    lane_change_enabled = flow_params["env"].additional_params.get("lane_change_enabled", False)
+    if lane_change_enabled:
+        # Actions: [accel, lane_change] per agent
+        act_space = Box(
+            low=np.array([-3.0, -1.0], dtype=np.float32),
+            high=np.array([3.0, 1.0], dtype=np.float32),
+            dtype=np.float32
+        )
+    else:
+        # Just acceleration
+        act_space = Box(
+            low=-3.0, 
+            high=3.0, 
+            shape=(1,),
+            dtype=np.float32
+        )
     
     # Create policies
     policies = {
@@ -217,10 +229,13 @@ def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=
     """
     # Create a copy of flow_params with realistic parameters for visualization
     from copy import deepcopy
-    from flow.controllers import IDMController, RLController, ContinuousRouter
+    from flow.controllers import IDMController, RLController, ContinuousRouter, SimLaneChangeController
     from flow.core.params import VehicleParams
     
     vis_flow_params = deepcopy(flow_params)
+    
+    # Enable lane changes for visualization
+    vis_flow_params["env"].additional_params["lane_change_enabled"] = True
     
     if horizon is None:
         horizon = 10000  # Much longer than default 1500
@@ -292,6 +307,7 @@ def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=
         veh_id="rl",
         acceleration_controller=(RLController, {}),
         routing_controller=(ContinuousRouter, {}),
+        lane_change_controller=(SimLaneChangeController, {}),  # Enable RL-controlled lane changes
         car_following_params=rl_cf_params,
         num_vehicles=flow_params["veh"].num_rl_vehicles,
         color="255,0,0",

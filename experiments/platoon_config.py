@@ -1,6 +1,6 @@
 """Flow configuration for the platooning experiment."""
 
-from flow.controllers import IDMController, RLController, ContinuousRouter
+from flow.controllers import IDMController, RLController, ContinuousRouter, SimLaneChangeController
 from flow.core.params import (
     SumoParams,
     EnvParams,
@@ -24,6 +24,7 @@ vehicles.add(
     veh_id="rl",
     acceleration_controller=(RLController, {}),
     routing_controller=(ContinuousRouter, {}),
+    lane_change_controller=(SimLaneChangeController, {}),  # Enable RL-controlled lane changes
     num_vehicles=2,
     color="255,0,0",
 )
@@ -42,13 +43,22 @@ additional_net_params = dict(
 # This prevents SUMO from teleporting vehicles on collisions/overlaps
 # which corrupts RL state and rewards
 
+# Environment parameters with optional lane change support
+env_params = EnvParams(
+    horizon=1500,
+    additional_params={
+        "lane_change_enabled": False,  # Set to True to enable lane changes
+        "lane_change_duration": 5.0,   # Cooldown between lane changes (seconds)
+    }
+)
+
 flow_params = dict(
     exp_tag="platoon_independent",
     env_name=PlatoonEnv,
     network=HighwayNetwork,
     simulator="traci",
     sim=SumoParams(render=False, sim_step=0.1, restart_instance=True),
-    env=EnvParams(horizon=1500),
+    env=env_params,
     net=NetParams(additional_params=additional_net_params),
     veh=vehicles,
     initial=InitialConfig(

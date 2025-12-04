@@ -14,15 +14,29 @@ class PlatoonEnv(Env):
         self.num_features = 5  # speed, headway, relative_speed, lane, normalized_speed
         self.target_speed = self.net_params.additional_params.get("speed_limit", 30.0)
         self.max_rl = self.initial_vehicles.num_rl_vehicles
+        # Lane change parameters
+        self.lane_change_enabled = env_params.additional_params.get("lane_change_enabled", False)
+        self.lane_change_duration = env_params.additional_params.get("lane_change_duration", 5.0)  # seconds
+        self.last_lane_change = {}  # Track last lane change time for each vehicle
 
     def reset(self):
         """Clear per-episode buffers and delegate to the base reset."""
         self.prev_speeds.clear()
+        self.last_lane_change.clear()
         return super().reset()
 
     @property
     def action_space(self):
-        return gym.spaces.Box(low=-3.0, high=3.0, shape=(self.max_rl,), dtype=np.float32)
+        if self.lane_change_enabled:
+            # Actions: [accel_0, lane_change_0, accel_1, lane_change_1, ...]
+            # Lane change: -1 (left), 0 (stay), 1 (right)
+            return gym.spaces.Box(
+                low=np.array([-3.0, -1.0] * self.max_rl, dtype=np.float32),
+                high=np.array([3.0, 1.0] * self.max_rl, dtype=np.float32),
+                dtype=np.float32
+            )
+        else:
+            return gym.spaces.Box(low=-3.0, high=3.0, shape=(self.max_rl,), dtype=np.float32)
 
     @property
     def observation_space(self):
@@ -132,11 +146,11 @@ class PlatoonEnv(Env):
         return avg_reward + bonus
 
     def _apply_rl_actions(self, rl_actions):
-        """Apply continuous acceleration commands to RL vehicles.
+        """Apply continuous acceleration and optional lane change commands to RL vehicles.
         
         Handles the case where there are more RL vehicles than actions
         (e.g., when new RL vehicles spawn via inflow). Extra vehicles
-        get a default action of 0 (maintain speed).
+        get a default action of 0 (maintain speed, no lane change).
         """
         if rl_actions is None:
             return
@@ -145,20 +159,75 @@ class PlatoonEnv(Env):
         if len(rl_ids) == 0:
             return
 
-        clipped = np.clip(rl_actions, -3.0, 3.0)
-        
-        # Handle case where there are more RL vehicles than actions
-        # (can happen when new RL vehicles spawn via inflow)
-        if len(clipped) < len(rl_ids):
-            # Pad with zeros (maintain speed) for extra vehicles
-            padded = np.zeros(len(rl_ids), dtype=np.float32)
-            padded[:len(clipped)] = clipped
-            clipped = padded
-        elif len(clipped) > len(rl_ids):
-            # Truncate if somehow we have more actions than vehicles
-            clipped = clipped[:len(rl_ids)]
-        
-        self.k.vehicle.apply_acceleration(rl_ids, clipped)
+        if self.lane_change_enabled:
+            # Actions are interleaved: [accel_0, lane_change_0, accel_1, lane_change_1, ...]
+            accelerations = rl_actions[::2]  # Every even index
+            lane_changes = rl_actions[1::2]  # Every odd index
+            
+            # Clip accelerations
+            accelerations = np.clip(accelerations, -3.0, 3.0)
+            # Discretize lane changes: continuous -> discrete (-1, 0, 1)
+            # Threshold at 0.3 to avoid noise
+            lane_changes_discrete = np.zeros_like(lane_changes, dtype=np.int32)
+            lane_changes_discrete[lane_changes > 0.3] = 1   # Right
+            lane_changes_discrete[lane_changes < -0.3] = -1  # Left
+            # Otherwise stays 0 (no lane change)
+            lane_changes = lane_changes_discrete.astype(np.float32)
+            
+            # Handle case where there are more RL vehicles than actions
+            num_actions = len(accelerations)
+            if num_actions < len(rl_ids):
+                # Pad with zeros for extra vehicles
+                accel_padded = np.zeros(len(rl_ids), dtype=np.float32)
+                accel_padded[:num_actions] = accelerations
+                accelerations = accel_padded
+                
+                lc_padded = np.zeros(len(rl_ids), dtype=np.float32)
+                lc_padded[:num_actions] = lane_changes
+                lane_changes = lc_padded
+            elif num_actions > len(rl_ids):
+                # Truncate if somehow we have more actions than vehicles
+                accelerations = accelerations[:len(rl_ids)]
+                lane_changes = lane_changes[:len(rl_ids)]
+            
+            # Apply lane change cooldown - prevent too frequent lane changes
+            current_time = self.time_counter
+            for i, veh_id in enumerate(rl_ids):
+                last_lc_time = self.last_lane_change.get(veh_id, -float('inf'))
+                time_since_lc = current_time - last_lc_time
+                
+                # If vehicle changed lanes recently, prevent new lane change
+                if time_since_lc < self.lane_change_duration:
+                    lane_changes[i] = 0.0
+                # If lane change is being performed, record it
+                elif lane_changes[i] != 0:  # Non-zero means lane change attempted
+                    # We'll update last_lane_change after checking if lane changed
+                    pass
+            
+            # Apply actions
+            self.k.vehicle.apply_acceleration(rl_ids, accelerations)
+            self.k.vehicle.apply_lane_change(rl_ids, direction=lane_changes)
+            
+            # Update last lane change times for vehicles that attempted lane changes
+            for i, veh_id in enumerate(rl_ids):
+                if lane_changes[i] != 0:
+                    # Record the attempt (SUMO will handle the actual lane change)
+                    self.last_lane_change[veh_id] = current_time
+        else:
+            # No lane changes - just acceleration
+            clipped = np.clip(rl_actions, -3.0, 3.0)
+            
+            # Handle case where there are more RL vehicles than actions
+            if len(clipped) < len(rl_ids):
+                # Pad with zeros (maintain speed) for extra vehicles
+                padded = np.zeros(len(rl_ids), dtype=np.float32)
+                padded[:len(clipped)] = clipped
+                clipped = padded
+            elif len(clipped) > len(rl_ids):
+                # Truncate if somehow we have more actions than vehicles
+                clipped = clipped[:len(rl_ids)]
+            
+            self.k.vehicle.apply_acceleration(rl_ids, clipped)
 
     def additional_command(self):
         """Highlight RL vehicles in red for easier visual debugging."""

@@ -45,6 +45,9 @@ class MultiAgentPlatoonEnv(RLlibMultiAgentEnv):
         # Create agent IDs: "agent_0", "agent_1", ..., "agent_9"
         self.agent_ids = [f"agent_{i}" for i in range(self.num_agents)]
         
+        # Check if lane changes are enabled
+        self.lane_change_enabled = env_config['env_params'].additional_params.get("lane_change_enabled", False)
+        
         # Store observation and action spaces (same for all agents)
         self._obs_space = Box(
             low=-np.inf, 
@@ -52,12 +55,22 @@ class MultiAgentPlatoonEnv(RLlibMultiAgentEnv):
             shape=(self.num_features,),
             dtype=np.float32
         )
-        self._action_space = Box(
-            low=-3.0, 
-            high=3.0, 
-            shape=(1,),  # Single continuous action per agent
-            dtype=np.float32
-        )
+        
+        # Action space depends on whether lane changes are enabled
+        if self.lane_change_enabled:
+            # Actions: [accel, lane_change] per agent
+            self._action_space = Box(
+                low=np.array([-3.0, -1.0], dtype=np.float32),
+                high=np.array([3.0, 1.0], dtype=np.float32),
+                dtype=np.float32
+            )
+        else:
+            self._action_space = Box(
+                low=-3.0, 
+                high=3.0,
+                shape=(1,),  # Single continuous action per agent
+                dtype=np.float32
+            )
     
     def reset(self):
         """Reset the environment and return initial observations.
@@ -134,20 +147,43 @@ class MultiAgentPlatoonEnv(RLlibMultiAgentEnv):
         
         Args:
             action_dict: Dictionary mapping agent_id -> action
-                Example: {"agent_0": [0.5], "agent_1": [-0.3], ...}
+                If lane_change_enabled: {"agent_0": [accel, lc], "agent_1": [accel, lc], ...}
+                Otherwise: {"agent_0": [accel], "agent_1": [accel], ...}
         
         Returns:
-            flat_actions: Numpy array of shape (num_agents,)
+            flat_actions: Numpy array
+                If lane_change_enabled: shape (num_agents * 2,) with interleaved [accel_0, lc_0, accel_1, lc_1, ...]
+                Otherwise: shape (num_agents,) with [accel_0, accel_1, ...]
         """
-        flat_actions = np.zeros(self.num_agents, dtype=np.float32)
-        
-        for i, agent_id in enumerate(self.agent_ids):
-            if agent_id in action_dict:
-                # Extract scalar action (remove array wrapper if present)
-                action = action_dict[agent_id]
-                if isinstance(action, (list, np.ndarray)):
-                    action = action[0]
-                flat_actions[i] = action
+        if self.lane_change_enabled:
+            # Actions are interleaved: [accel_0, lc_0, accel_1, lc_1, ...]
+            flat_actions = np.zeros(self.num_agents * 2, dtype=np.float32)
+            
+            for i, agent_id in enumerate(self.agent_ids):
+                if agent_id in action_dict:
+                    action = action_dict[agent_id]
+                    if isinstance(action, (list, np.ndarray)):
+                        if len(action) >= 2:
+                            flat_actions[i * 2] = action[0]  # acceleration
+                            flat_actions[i * 2 + 1] = action[1]  # lane change
+                        elif len(action) == 1:
+                            flat_actions[i * 2] = action[0]  # acceleration only
+                            flat_actions[i * 2 + 1] = 0.0  # no lane change (for backward compatibility)
+                    else:
+                        # Scalar action (from old policy trained without lane changes)
+                        flat_actions[i * 2] = float(action)  # acceleration
+                        flat_actions[i * 2 + 1] = 0.0  # no lane change (for backward compatibility)
+        else:
+            # Just acceleration actions
+            flat_actions = np.zeros(self.num_agents, dtype=np.float32)
+            
+            for i, agent_id in enumerate(self.agent_ids):
+                if agent_id in action_dict:
+                    # Extract scalar action (remove array wrapper if present)
+                    action = action_dict[agent_id]
+                    if isinstance(action, (list, np.ndarray)):
+                        action = action[0]
+                    flat_actions[i] = action
         
         return flat_actions
     
