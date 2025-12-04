@@ -33,10 +33,16 @@ def main():
 
     ray.init(ignore_reinit_error=True, include_dashboard=False, log_to_driver=False)
 
-    obs_space = Box(low=-np.inf, high=np.inf, shape=(5,), dtype=np.float32)
+    # Check if lane changes are enabled to determine observation space
+    lane_change_enabled = params["env"].additional_params.get("lane_change_enabled", False)
+    if lane_change_enabled:
+        num_features = 18  # 9 longitudinal + 9 lateral
+    else:
+        num_features = 9  # 9 longitudinal features only
+    
+    obs_space = Box(low=-np.inf, high=np.inf, shape=(num_features,), dtype=np.float32)
     
     # Check if lane changes are enabled
-    lane_change_enabled = params["env"].additional_params.get("lane_change_enabled", False)
     if lane_change_enabled:
         # Actions: [accel, lane_change] per agent
         act_space = Box(

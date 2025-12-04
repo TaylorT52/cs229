@@ -37,7 +37,7 @@ def find_latest_checkpoint(results_dir=None):
         tuple: (checkpoint_dir, checkpoint_num) or (None, None) if not found
     """
     if results_dir is None:
-        results_dir = os.path.join(project_root, "results", "multi_agent")
+        results_dir = os.path.join(project_root, "results", "independent")
     
     if not os.path.exists(results_dir):
         return None, None
@@ -142,15 +142,22 @@ def load_trained_model(checkpoint_path, checkpoint_num=None):
     
     # Define observation and action spaces
     num_agents = flow_params["veh"].num_rl_vehicles
+    
+    # Check if lane changes are enabled to determine observation space
+    lane_change_enabled = flow_params["env"].additional_params.get("lane_change_enabled", False)
+    if lane_change_enabled:
+        num_features = 18  # 9 longitudinal + 9 lateral
+    else:
+        num_features = 9  # 9 longitudinal features only
+    
     obs_space = Box(
         low=-np.inf, 
         high=np.inf, 
-        shape=(5,),
+        shape=(num_features,),
         dtype=np.float32
     )
     
     # Check if lane changes are enabled
-    lane_change_enabled = flow_params["env"].additional_params.get("lane_change_enabled", False)
     if lane_change_enabled:
         # Actions: [accel, lane_change] per agent
         act_space = Box(
@@ -681,8 +688,8 @@ def main():
         if args.checkpoint_path is None:
             checkpoint_path, checkpoint_num = find_latest_checkpoint()
             if checkpoint_path is None:
-                print("ERROR: No checkpoints found in results/multi_agent/")
-                print("Please train a model first using train_multi_agent.py")
+                print("ERROR: No checkpoints found in results/independent/")
+                print("Please train a model first using train_independent.py")
                 return
             print(f"Using latest checkpoint: {checkpoint_path}")
         else:
