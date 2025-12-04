@@ -4,8 +4,6 @@ import argparse
 import glob
 import json
 import numpy as np
-from collections import defaultdict
-from datetime import datetime
 
 # Add project root to path
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -208,240 +206,7 @@ def load_trained_model(checkpoint_path, checkpoint_num=None):
     return trainer, env_config
 
 
-def calculate_episode_metrics(metrics, total_steps, speed_limit):
-    """Calculate summary statistics from collected metrics."""
-    summary = {
-        'episode': metrics['episode'],
-        'total_steps': total_steps,
-        'duration_seconds': total_steps * 0.1,
-        'rl': {},
-        'human': {},
-        'comparison': {}
-    }
-    
-    # RL metrics
-    rl = metrics['rl']
-    if rl['speeds']:
-        summary['rl']['avg_speed'] = np.mean(rl['speeds'])
-        summary['rl']['std_speed'] = np.std(rl['speeds'])
-        summary['rl']['max_speed'] = np.max(rl['speeds'])
-        summary['rl']['min_speed'] = np.min(rl['speeds'])
-        summary['rl']['speed_efficiency'] = np.mean(rl['speeds']) / speed_limit if speed_limit > 0 else 0
-    else:
-        summary['rl']['avg_speed'] = 0
-        summary['rl']['std_speed'] = 0
-        summary['rl']['max_speed'] = 0
-        summary['rl']['min_speed'] = 0
-        summary['rl']['speed_efficiency'] = 0
-    
-    if rl['headways']:
-        valid_headways = [h for h in rl['headways'] if h is not None and h > 0]
-        if valid_headways:
-            summary['rl']['avg_headway'] = np.mean(valid_headways)
-            summary['rl']['std_headway'] = np.std(valid_headways)
-            summary['rl']['min_headway'] = np.min(valid_headways)
-        else:
-            summary['rl']['avg_headway'] = 0
-            summary['rl']['std_headway'] = 0
-            summary['rl']['min_headway'] = 0
-    else:
-        summary['rl']['avg_headway'] = 0
-        summary['rl']['std_headway'] = 0
-        summary['rl']['min_headway'] = 0
-    
-    if rl['accelerations']:
-        summary['rl']['avg_accel'] = np.mean(rl['accelerations'])
-        summary['rl']['std_accel'] = np.std(rl['accelerations'])
-        summary['rl']['jerk'] = np.std(np.diff(rl['accelerations'])) if len(rl['accelerations']) > 1 else 0
-    else:
-        summary['rl']['avg_accel'] = 0
-        summary['rl']['std_accel'] = 0
-        summary['rl']['jerk'] = 0
-    
-    summary['rl']['total_reward'] = np.sum(rl['rewards']) if rl['rewards'] else 0
-    summary['rl']['avg_reward'] = np.mean(rl['rewards']) if rl['rewards'] else 0
-    summary['rl']['time_in_optimal_headway_pct'] = (rl['time_in_optimal_headway'] / total_steps * 100) if total_steps > 0 else 0
-    summary['rl']['time_in_dangerous_headway_pct'] = (rl['time_in_dangerous_headway'] / total_steps * 100) if total_steps > 0 else 0
-    summary['rl']['emergency_brakes'] = rl['emergency_brakes']
-    summary['rl']['collisions'] = rl['collisions']
-    
-    # Human metrics
-    human = metrics['human']
-    if human['speeds']:
-        summary['human']['avg_speed'] = np.mean(human['speeds'])
-        summary['human']['std_speed'] = np.std(human['speeds'])
-        summary['human']['max_speed'] = np.max(human['speeds'])
-        summary['human']['min_speed'] = np.min(human['speeds'])
-        summary['human']['speed_efficiency'] = np.mean(human['speeds']) / speed_limit if speed_limit > 0 else 0
-    else:
-        summary['human']['avg_speed'] = 0
-        summary['human']['std_speed'] = 0
-        summary['human']['max_speed'] = 0
-        summary['human']['min_speed'] = 0
-        summary['human']['speed_efficiency'] = 0
-    
-    if human['headways']:
-        valid_headways = [h for h in human['headways'] if h is not None and h > 0]
-        if valid_headways:
-            summary['human']['avg_headway'] = np.mean(valid_headways)
-            summary['human']['std_headway'] = np.std(valid_headways)
-            summary['human']['min_headway'] = np.min(valid_headways)
-        else:
-            summary['human']['avg_headway'] = 0
-            summary['human']['std_headway'] = 0
-            summary['human']['min_headway'] = 0
-    else:
-        summary['human']['avg_headway'] = 0
-        summary['human']['std_headway'] = 0
-        summary['human']['min_headway'] = 0
-    
-    if human['accelerations']:
-        summary['human']['avg_accel'] = np.mean(human['accelerations'])
-        summary['human']['std_accel'] = np.std(human['accelerations'])
-        summary['human']['jerk'] = np.std(np.diff(human['accelerations'])) if len(human['accelerations']) > 1 else 0
-    else:
-        summary['human']['avg_accel'] = 0
-        summary['human']['std_accel'] = 0
-        summary['human']['jerk'] = 0
-    
-    summary['human']['time_in_optimal_headway_pct'] = (human['time_in_optimal_headway'] / total_steps * 100) if total_steps > 0 else 0
-    summary['human']['time_in_dangerous_headway_pct'] = (human['time_in_dangerous_headway'] / total_steps * 100) if total_steps > 0 else 0
-    summary['human']['emergency_brakes'] = human['emergency_brakes']
-    summary['human']['collisions'] = human['collisions']
-    
-    # Comparison metrics
-    if summary['rl']['avg_speed'] > 0 and summary['human']['avg_speed'] > 0:
-        summary['comparison']['speed_diff'] = summary['rl']['avg_speed'] - summary['human']['avg_speed']
-        summary['comparison']['speed_diff_pct'] = (summary['comparison']['speed_diff'] / summary['human']['avg_speed'] * 100) if summary['human']['avg_speed'] > 0 else 0
-    else:
-        summary['comparison']['speed_diff'] = 0
-        summary['comparison']['speed_diff_pct'] = 0
-    
-    if summary['rl']['avg_headway'] > 0 and summary['human']['avg_headway'] > 0:
-        summary['comparison']['headway_diff'] = summary['rl']['avg_headway'] - summary['human']['avg_headway']
-        summary['comparison']['headway_diff_pct'] = (summary['comparison']['headway_diff'] / summary['human']['avg_headway'] * 100) if summary['human']['avg_headway'] > 0 else 0
-    else:
-        summary['comparison']['headway_diff'] = 0
-        summary['comparison']['headway_diff_pct'] = 0
-    
-    return summary
-
-
-def print_metrics_summary(summary):
-    """Print a formatted summary of episode metrics."""
-    print(f"\nRL Vehicles (Red):")
-    print(f"  Average Speed: {summary['rl']['avg_speed']:.2f} m/s (std: {summary['rl']['std_speed']:.2f})")
-    print(f"  Speed Range: [{summary['rl']['min_speed']:.2f}, {summary['rl']['max_speed']:.2f}] m/s")
-    print(f"  Speed Efficiency: {summary['rl']['speed_efficiency']:.1%}")
-    print(f"  Average Headway: {summary['rl']['avg_headway']:.2f} m (std: {summary['rl']['std_headway']:.2f})")
-    print(f"  Minimum Headway: {summary['rl']['min_headway']:.2f} m")
-    print(f"  Time in Optimal Headway (10-30m): {summary['rl']['time_in_optimal_headway_pct']:.1f}%")
-    print(f"  Time in Dangerous Headway (<5m): {summary['rl']['time_in_dangerous_headway_pct']:.1f}%")
-    print(f"  Average Acceleration: {summary['rl']['avg_accel']:.2f} m/s² (std: {summary['rl']['std_accel']:.2f})")
-    print(f"  Jerk (smoothness): {summary['rl']['jerk']:.2f} m/s³")
-    print(f"  Total Reward: {summary['rl']['total_reward']:.2f}")
-    print(f"  Average Reward: {summary['rl']['avg_reward']:.2f}")
-    print(f"  Emergency Brakes: {summary['rl']['emergency_brakes']}")
-    print(f"  Collisions: {summary['rl']['collisions']}")
-    
-    print(f"\nHuman Vehicles (Blue):")
-    print(f"  Average Speed: {summary['human']['avg_speed']:.2f} m/s (std: {summary['human']['std_speed']:.2f})")
-    print(f"  Speed Range: [{summary['human']['min_speed']:.2f}, {summary['human']['max_speed']:.2f}] m/s")
-    print(f"  Speed Efficiency: {summary['human']['speed_efficiency']:.1%}")
-    print(f"  Average Headway: {summary['human']['avg_headway']:.2f} m (std: {summary['human']['std_headway']:.2f})")
-    print(f"  Minimum Headway: {summary['human']['min_headway']:.2f} m")
-    print(f"  Time in Optimal Headway (10-30m): {summary['human']['time_in_optimal_headway_pct']:.1f}%")
-    print(f"  Time in Dangerous Headway (<5m): {summary['human']['time_in_dangerous_headway_pct']:.1f}%")
-    print(f"  Average Acceleration: {summary['human']['avg_accel']:.2f} m/s² (std: {summary['human']['std_accel']:.2f})")
-    print(f"  Jerk (smoothness): {summary['human']['jerk']:.2f} m/s³")
-    print(f"  Emergency Brakes: {summary['human']['emergency_brakes']}")
-    print(f"  Collisions: {summary['human']['collisions']}")
-    
-    print(f"\nComparison (RL - Human):")
-    print(f"  Speed Difference: {summary['comparison']['speed_diff']:+.2f} m/s ({summary['comparison']['speed_diff_pct']:+.1f}%)")
-    print(f"  Headway Difference: {summary['comparison']['headway_diff']:+.2f} m ({summary['comparison']['headway_diff_pct']:+.1f}%)")
-
-
-def print_overall_summary(all_episode_metrics):
-    """Print summary statistics across all episodes."""
-    if not all_episode_metrics:
-        return
-    
-    # Aggregate metrics
-    rl_speeds = [m['rl']['avg_speed'] for m in all_episode_metrics]
-    rl_headways = [m['rl']['avg_headway'] for m in all_episode_metrics]
-    rl_rewards = [m['rl']['avg_reward'] for m in all_episode_metrics]
-    rl_optimal_time = [m['rl']['time_in_optimal_headway_pct'] for m in all_episode_metrics]
-    
-    human_speeds = [m['human']['avg_speed'] for m in all_episode_metrics]
-    human_headways = [m['human']['avg_headway'] for m in all_episode_metrics]
-    human_optimal_time = [m['human']['time_in_optimal_headway_pct'] for m in all_episode_metrics]
-    
-    print(f"\nRL Vehicles (Red) - Across {len(all_episode_metrics)} episodes:")
-    print(f"  Average Speed: {np.mean(rl_speeds):.2f} ± {np.std(rl_speeds):.2f} m/s")
-    print(f"  Average Headway: {np.mean(rl_headways):.2f} ± {np.std(rl_headways):.2f} m")
-    print(f"  Average Reward: {np.mean(rl_rewards):.2f} ± {np.std(rl_rewards):.2f}")
-    print(f"  Time in Optimal Headway: {np.mean(rl_optimal_time):.1f} ± {np.std(rl_optimal_time):.1f}%")
-    
-    print(f"\nHuman Vehicles (Blue) - Across {len(all_episode_metrics)} episodes:")
-    print(f"  Average Speed: {np.mean(human_speeds):.2f} ± {np.std(human_speeds):.2f} m/s")
-    print(f"  Average Headway: {np.mean(human_headways):.2f} ± {np.std(human_headways):.2f} m")
-    print(f"  Time in Optimal Headway: {np.mean(human_optimal_time):.1f} ± {np.std(human_optimal_time):.1f}%")
-    
-    print(f"\nComparison:")
-    speed_diff = np.mean([m['comparison']['speed_diff'] for m in all_episode_metrics])
-    headway_diff = np.mean([m['comparison']['headway_diff'] for m in all_episode_metrics])
-    print(f"  Average Speed Difference (RL - Human): {speed_diff:+.2f} m/s")
-    print(f"  Average Headway Difference (RL - Human): {headway_diff:+.2f} m")
-
-
-def save_metrics_to_file(all_episode_metrics, checkpoint_path=None):
-    """Save metrics to a JSON file for easy comparison between different policies."""
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    
-    # Create metrics directory if it doesn't exist
-    metrics_dir = os.path.join(project_root, "results", "metrics")
-    os.makedirs(metrics_dir, exist_ok=True)
-    
-    # Create filename with checkpoint info if available
-    if checkpoint_path:
-        checkpoint_name = os.path.basename(os.path.dirname(checkpoint_path))
-        filename = f"metrics_{checkpoint_name}_{timestamp}.json"
-    else:
-        filename = f"metrics_{timestamp}.json"
-    
-    filepath = os.path.join(metrics_dir, filename)
-    
-    # Prepare data for JSON (convert numpy types to native Python types)
-    metrics_data = {
-        'timestamp': timestamp,
-        'checkpoint_path': checkpoint_path if checkpoint_path else 'unknown',
-        'num_episodes': len(all_episode_metrics),
-        'episodes': []
-    }
-    
-    for summary in all_episode_metrics:
-        # Convert numpy types to native Python types for JSON serialization
-        episode_data = {
-            'episode': summary['episode'],
-            'total_steps': int(summary['total_steps']),
-            'duration_seconds': float(summary['duration_seconds']),
-            'rl': {k: float(v) if isinstance(v, (np.floating, np.integer)) else v 
-                   for k, v in summary['rl'].items()},
-            'human': {k: float(v) if isinstance(v, (np.floating, np.integer)) else v 
-                     for k, v in summary['human'].items()},
-            'comparison': {k: float(v) if isinstance(v, (np.floating, np.integer)) else v 
-                          for k, v in summary['comparison'].items()}
-        }
-        metrics_data['episodes'].append(episode_data)
-    
-    with open(filepath, 'w') as f:
-        json.dump(metrics_data, f, indent=2)
-    
-    return filepath
-
-
-def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=None, checkpoint_path=None):
+def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=None):
     """Run visualization with trained model.
     
     Args:
@@ -590,44 +355,12 @@ def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=
         print("\nPress Ctrl+C to stop the simulation\n")
     
     total_rewards = []
-    all_episode_metrics = []
     
     try:
         for episode in range(num_episodes):
             obs_dict = env.reset()
             done_dict = {"__all__": False}
             episode_reward = {agent_id: 0.0 for agent_id in env.agent_ids}
-            
-            # Initialize metrics collection for this episode
-            metrics = {
-                'episode': episode + 1,
-                'rl': {
-                    'speeds': [],
-                    'headways': [],
-                    'accelerations': [],
-                    'rewards': [],
-                    'time_in_optimal_headway': 0,  # 10-30m range
-                    'time_in_dangerous_headway': 0,  # < 5m
-                    'collisions': 0,
-                    'emergency_brakes': 0,
-                },
-                'human': {
-                    'speeds': [],
-                    'headways': [],
-                    'accelerations': [],
-                    'time_in_optimal_headway': 0,
-                    'time_in_dangerous_headway': 0,
-                    'collisions': 0,
-                    'emergency_brakes': 0,
-                },
-                'comparison': {
-                    'speed_difference': [],  # RL - Human
-                    'headway_difference': [],
-                }
-            }
-            
-            # Track previous speeds for acceleration calculation
-            prev_speeds = {}
             
             # Set vehicle colors explicitly for visibility
             rl_ids = env.env.k.vehicle.get_rl_ids()
@@ -653,9 +386,6 @@ def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=
                 
                 # Step environment
                 obs_dict, reward_dict, done_dict, info_dict = env.step(action_dict)
-                
-                # reward_dict uses agent IDs (e.g., "agent_0") as keys, not vehicle IDs
-                # This is the same reward signal used during training - it evaluates policy performance
                 
                 # Check if environment says it's done, but continue anyway for visualization
                 # (unless it's a crash or user interruption)
@@ -800,87 +530,6 @@ def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=
                 for agent_id in env.agent_ids:
                     episode_reward[agent_id] += reward_dict.get(agent_id, 0.0)
                 
-                # Collect metrics every step
-                rl_ids = env.env.k.vehicle.get_rl_ids()
-                human_ids = env.env.k.vehicle.get_human_ids()
-                
-                # Collect RL vehicle metrics
-                rl_speeds_this_step = []
-                rl_headways_this_step = []
-                # Map vehicle IDs to agent IDs for reward lookup
-                sorted_rl_ids = sorted(rl_ids)
-                for i, rl_id in enumerate(sorted_rl_ids):
-                    try:
-                        speed = env.env.k.vehicle.get_speed(rl_id)
-                        headway = env.env.k.vehicle.get_headway(rl_id)
-                        
-                        rl_speeds_this_step.append(speed)
-                        metrics['rl']['speeds'].append(speed)
-                        
-                        if headway is not None and headway > 0:
-                            rl_headways_this_step.append(headway)
-                            metrics['rl']['headways'].append(headway)
-                            if 10.0 <= headway <= 30.0:
-                                metrics['rl']['time_in_optimal_headway'] += 1
-                            if headway < 5.0:
-                                metrics['rl']['time_in_dangerous_headway'] += 1
-                        
-                        # Calculate acceleration (change in speed)
-                        if rl_id in prev_speeds:
-                            accel = (speed - prev_speeds[rl_id]) / 0.1  # 0.1s timestep
-                            metrics['rl']['accelerations'].append(accel)
-                            # Detect emergency braking (large negative acceleration)
-                            if accel < -4.0:
-                                metrics['rl']['emergency_brakes'] += 1
-                        prev_speeds[rl_id] = speed
-                        
-                        # Track reward - use agent_id (e.g., "agent_0") not vehicle_id
-                        agent_id = f"agent_{i}"
-                        if agent_id in reward_dict:
-                            metrics['rl']['rewards'].append(reward_dict[agent_id])
-                    except:
-                        pass
-                
-                # Collect human vehicle metrics
-                human_speeds_this_step = []
-                human_headways_this_step = []
-                for human_id in human_ids:
-                    try:
-                        speed = env.env.k.vehicle.get_speed(human_id)
-                        headway = env.env.k.vehicle.get_headway(human_id)
-                        
-                        human_speeds_this_step.append(speed)
-                        metrics['human']['speeds'].append(speed)
-                        
-                        if headway is not None and headway > 0:
-                            human_headways_this_step.append(headway)
-                            metrics['human']['headways'].append(headway)
-                            if 10.0 <= headway <= 30.0:
-                                metrics['human']['time_in_optimal_headway'] += 1
-                            if headway < 5.0:
-                                metrics['human']['time_in_dangerous_headway'] += 1
-                        
-                        # Calculate acceleration
-                        if human_id in prev_speeds:
-                            accel = (speed - prev_speeds[human_id]) / 0.1
-                            metrics['human']['accelerations'].append(accel)
-                            if accel < -4.0:
-                                metrics['human']['emergency_brakes'] += 1
-                        prev_speeds[human_id] = speed
-                    except:
-                        pass
-                
-                # Comparison metrics (average RL vs average human for this step)
-                if rl_speeds_this_step and human_speeds_this_step:
-                    avg_rl_speed = np.mean(rl_speeds_this_step)
-                    avg_human_speed = np.mean(human_speeds_this_step)
-                    metrics['comparison']['speed_difference'].append(avg_rl_speed - avg_human_speed)
-                
-                if rl_headways_this_step and human_headways_this_step:
-                    avg_rl_headway = np.mean(rl_headways_this_step)
-                    avg_human_headway = np.mean(human_headways_this_step)
-                    metrics['comparison']['headway_difference'].append(avg_rl_headway - avg_human_headway)
-                
                 step += 1
                 
                 # Print progress every 100 steps
@@ -890,41 +539,18 @@ def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=
             
             avg_episode_reward = np.mean([episode_reward[aid] for aid in env.agent_ids])
             total_rewards.append(avg_episode_reward)
-            
-            # Calculate summary statistics for this episode
-            episode_summary = calculate_episode_metrics(metrics, step, speed_limit)
-            all_episode_metrics.append(episode_summary)
-            
-            # Print episode summary
-            print(f"\n{'='*60}")
-            print(f"Episode {episode+1} completed!")
-            print(f"{'='*60}")
-            print_metrics_summary(episode_summary)
-            print(f"{'='*60}\n")
+            print(f"\nEpisode {episode+1} completed!")
+            print(f"Average reward per agent: {avg_episode_reward:.2f}")
+            print(f"Total steps: {step}\n")
     
     except KeyboardInterrupt:
         print("\n\nSimulation interrupted by user")
     
     finally:
         env.env.terminate()
-        print("\n" + "="*60)
-        print("SIMULATION ENDED")
-        print("="*60)
-        
+        print("\nSimulation ended")
         if total_rewards:
-            print(f"\nAverage reward across episodes: {np.mean(total_rewards):.2f}")
-        
-        # Print overall summary across all episodes
-        if all_episode_metrics:
-            print("\n" + "="*60)
-            print("OVERALL METRICS SUMMARY (Across All Episodes)")
-            print("="*60)
-            print_overall_summary(all_episode_metrics)
-            
-            # Save metrics to file for comparison
-            metrics_file = save_metrics_to_file(all_episode_metrics, checkpoint_path)
-            print(f"\nMetrics saved to: {metrics_file}")
-            print("="*60)
+            print(f"Average reward across episodes: {np.mean(total_rewards):.2f}")
 
 
 def main():
@@ -995,8 +621,7 @@ def main():
             env_config, 
             render=not args.no_render,
             num_episodes=args.num_episodes,
-            horizon=args.horizon,
-            checkpoint_path=checkpoint_path
+            horizon=args.horizon
         )
     
     finally:

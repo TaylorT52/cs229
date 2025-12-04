@@ -15,3 +15,7 @@ build/
 .eggs/
 *.log
 .DS_Store
+*.venv/
+results/
+emission_output/
+tests/
