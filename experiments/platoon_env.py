@@ -36,7 +36,7 @@ class PlatoonEnv(Env):
     def _safe_headway(self, veh_id):
         headway = self.k.vehicle.get_headway(veh_id)
         if headway is None or headway < 0:  # no leader or invalid reading
-            return 999.0
+            return None
         return headway
 
     def get_state(self):
@@ -56,7 +56,15 @@ class PlatoonEnv(Env):
                     relative_speed = 0.0
                 lane = self.k.vehicle.get_lane(rl_id)
                 normalized_speed = speed / max(self.target_speed, 1e-3)
-                states.extend([speed, headway, relative_speed, lane, normalized_speed])
+                states.extend(
+                    [
+                        speed,
+                        headway if headway is not None else 0.0,
+                        relative_speed,
+                        lane,
+                        normalized_speed,
+                    ]
+                )
             else:
                 states.extend([0.0] * self.num_features)
         return np.array(states, dtype=np.float32)
@@ -78,13 +86,15 @@ class PlatoonEnv(Env):
             speed_reward = -speed_error / max(self.target_speed, 1e-3)
             total_reward += 0.3 * speed_reward
 
-            if 10.0 <= headway <= 30.0:
-                platoon_reward = 1.0
-                positive_bonus += 1.0
-            elif headway > 30.0:
-                platoon_reward = -0.5 * (headway - 30.0) / 100.0
-            else:
-                platoon_reward = 0.0
+            platoon_reward = 0.0
+            if headway is not None:
+                if 10.0 <= headway <= 30.0:
+                    platoon_reward = 1.0
+                    positive_bonus += 1.0
+                elif headway > 30.0:
+                    platoon_reward = max(-0.5, -0.01 * (headway - 30.0))
+                else:
+                    platoon_reward = 0.0
             total_reward += 0.3 * platoon_reward
 
             if rl_id in self.prev_speeds:
@@ -94,10 +104,11 @@ class PlatoonEnv(Env):
                     total_reward += 0.2 * (-speed_change / 10.0)
             self.prev_speeds[rl_id] = speed
 
-            if headway < 5.0:
-                total_reward += 0.1 * (-5.0 * (5.0 - headway))
-            elif headway < 8.0:
-                total_reward += 0.1 * (-1.0 * (8.0 - headway))
+            if headway is not None:
+                if headway < 5.0:
+                    total_reward += 0.1 * (-1.0 * min(1.0, (5.0 - headway) / 5.0))
+                elif headway < 8.0:
+                    total_reward += 0.1 * (-1.0 * (8.0 - headway) / 3.0)
 
         avg_reward = total_reward / len(rl_ids)
         bonus = positive_bonus / max(len(rl_ids), 1)
