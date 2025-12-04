@@ -38,6 +38,10 @@ additional_net_params = dict(
     boundary_cell_length=500,
 )
 
+# Note: Collision parameters are set via TraCI in the visualization script
+# This prevents SUMO from teleporting vehicles on collisions/overlaps
+# which corrupts RL state and rewards
+
 flow_params = dict(
     exp_tag="platoon_independent",
     env_name=PlatoonEnv,

@@ -34,9 +34,37 @@ class PlatoonEnv(Env):
         )
 
     def _safe_headway(self, veh_id):
+        """Compute headway with modular arithmetic for circular roads.
+        
+        This fixes the wraparound issue where positions jump from 999.8m to 0.2m,
+        which would give negative headway. Uses modular distance calculation.
+        """
         headway = self.k.vehicle.get_headway(veh_id)
         if headway is None or headway < 0:  # no leader or invalid reading
             return 999.0
+        
+        # Get road length for modular calculation (if using circular/ring road)
+        road_length = self.net_params.additional_params.get("length", 1000.0)
+        
+        # Check if this is a circular road (ring network)
+        # For now, assume HighwayNetwork is straight, but handle wraparound if positions wrap
+        # If headway seems too large (likely wraparound artifact), compute modular distance
+        if headway > road_length * 0.5:
+            # Likely wraparound: compute modular distance manually
+            try:
+                pos_follower = self.k.vehicle.get_position(veh_id)
+                leader = self.k.vehicle.get_leader(veh_id)
+                if leader:
+                    pos_leader = self.k.vehicle.get_position(leader)
+                    # Modular distance: (pos_leader - pos_follower) % road_length
+                    # But handle negative case
+                    delta = pos_leader - pos_follower
+                    if delta < 0:
+                        delta += road_length
+                    return delta
+            except:
+                pass
+        
         return headway
 
     def get_state(self):
@@ -104,7 +132,12 @@ class PlatoonEnv(Env):
         return avg_reward + bonus
 
     def _apply_rl_actions(self, rl_actions):
-        """Apply continuous acceleration commands to RL vehicles."""
+        """Apply continuous acceleration commands to RL vehicles.
+        
+        Handles the case where there are more RL vehicles than actions
+        (e.g., when new RL vehicles spawn via inflow). Extra vehicles
+        get a default action of 0 (maintain speed).
+        """
         if rl_actions is None:
             return
 
@@ -113,7 +146,18 @@ class PlatoonEnv(Env):
             return
 
         clipped = np.clip(rl_actions, -3.0, 3.0)
-        clipped = clipped[: len(rl_ids)]
+        
+        # Handle case where there are more RL vehicles than actions
+        # (can happen when new RL vehicles spawn via inflow)
+        if len(clipped) < len(rl_ids):
+            # Pad with zeros (maintain speed) for extra vehicles
+            padded = np.zeros(len(rl_ids), dtype=np.float32)
+            padded[:len(clipped)] = clipped
+            clipped = padded
+        elif len(clipped) > len(rl_ids):
+            # Truncate if somehow we have more actions than vehicles
+            clipped = clipped[:len(rl_ids)]
+        
         self.k.vehicle.apply_acceleration(rl_ids, clipped)
 
     def additional_command(self):

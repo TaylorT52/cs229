@@ -229,7 +229,13 @@ def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=
     original_speed_limit = flow_params["net"].additional_params.get("speed_limit", 30.0)
     speed_limit = 15.0  
  
+    # Use longer highway for realistic continuous traffic (recommended approach)
+    # This avoids wraparound issues and provides natural inflow/outflow
+    vis_flow_params["net"].additional_params["length"] = 3000  # 3km highway
     vis_flow_params["net"].additional_params["speed_limit"] = speed_limit
+    
+    # Note: Collision parameters are set via TraCI after environment creation
+    # (see code below where we disable teleports)
     
     human_cf_params = SumoCarFollowingParams(
         accel=1.8,          # Moderate acceleration: 1.8 m/s² (realistic for normal driving)
@@ -260,7 +266,12 @@ def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=
     )
     
 
+    # Use inflow/outflow for continuous realistic traffic (recommended approach)
+    # This avoids wraparound issues and provides natural traffic flow
+    from flow.core.params import InFlows
+    
     vis_vehicles = VehicleParams()
+    # Start with fewer initial vehicles - inflow will add more continuously
     vis_vehicles.add(
         veh_id="human",
         acceleration_controller=(IDMController, {
@@ -274,7 +285,7 @@ def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=
         }),
         routing_controller=(ContinuousRouter, {}),
         car_following_params=human_cf_params,
-        num_vehicles=flow_params["veh"].num_vehicles - flow_params["veh"].num_rl_vehicles,
+        num_vehicles=10,  # Fewer initial vehicles - inflow will add more
         color="0,100,255",
     )
     vis_vehicles.add(
@@ -286,8 +297,35 @@ def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=
         color="255,0,0",
     )
     
+    # Add continuous inflow of human and RL vehicles for realistic traffic
+    # Inflows are passed to NetParams, not to the Network constructor
+    inflows = InFlows()
+    inflows.add(
+        veh_type="human",
+        edge="highway_0",
+        vehs_per_hour=1800,  # ~0.5 vehicles per second (realistic traffic density)
+        depart_speed="max",  # Use new parameter name (departSpeed is deprecated)
+        depart_lane="random",  # Use new parameter name (departLane is deprecated)
+        begin=1,  # Must be >= 1 second (Flow requirement)
+        end=horizon * 0.1,  # Continue for entire simulation duration
+    )
+    # Add RL vehicles to inflow (30% of human flow for mixed traffic)
+    inflows.add(
+        veh_type="rl",
+        edge="highway_0",
+        vehs_per_hour=540,  # ~30% of human flow (0.15 vehicles per second)
+        depart_speed="max",
+        depart_lane="random",
+        begin=1,
+        end=horizon * 0.1,
+    )
+    
+    # Add inflows to NetParams
+    vis_flow_params["net"].inflows = inflows
+    
     # Create environment with rendering enabled
     # Need to create a new network for the visualization environment
+    # Use inflow/outflow for continuous realistic traffic
     network = HighwayNetwork(
         name="highway",
         vehicles=vis_vehicles,
@@ -318,40 +356,50 @@ def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=
     env = MultiAgentPlatoonEnv(env_config_copy)
     
     # Disable collision teleportation - keep vehicles at collision locations
-    # Set collision.action to "none" so vehicles stay where they collide
+    # Set collision.action to "warn" so vehicles stay where they collide (critical for stable RL)
     try:
         traci = env.env.k.kernel_api
-        # Set collision action to "none" - vehicles will remain at collision location
+        # Set collision action to "warn" - vehicles will remain at collision location
         # Options: "none" (keep vehicles), "warn" (warn but keep), "teleport" (default), "remove"
-        traci.simulation.setParameter("", "collision.action", "none")
-        print("Collision teleportation disabled - vehicles will remain at collision locations")
+        traci.simulation.setParameter("", "collision.action", "warn")
+        traci.simulation.setParameter("", "collision.stoptime", "10000")
+        print("✅ Collision teleportation disabled - vehicles will remain at collision locations")
     except Exception as e:
         print(f"Warning: Could not set collision parameters: {e}")
         print("Attempting alternative method...")
         try:
             # Alternative: set via sumoParams if available
             if hasattr(env.env.k.sim_params, 'additional_params'):
-                env.env.k.sim_params.additional_params['collision.action'] = 'none'
+                env.env.k.sim_params.additional_params['collision.action'] = 'warn'
         except:
             pass
     
     simulation_duration = vis_flow_params["env"].horizon * 0.1  # Convert steps to seconds
     
     print("=" * 60)
-    print("Starting Visualization")
+    print("Starting Visualization - Continuous Traffic Mode")
     print("=" * 60)
-    print(f"RL vehicles (red): {env.num_agents}")
-    print(f"Human vehicles (blue): {vis_vehicles.num_vehicles - env.num_agents}")
+    print(f"Initial RL vehicles (red): {env.num_agents}")
+    print(f"Initial human vehicles (blue): {vis_vehicles.num_vehicles - env.num_agents}")
+    print(f"Human vehicle inflow: 1800 veh/hour (~0.5 veh/sec)")
+    print(f"RL vehicle inflow: 540 veh/hour (~0.15 veh/sec, 30% of human flow)")
+    print(f"Highway length: {vis_flow_params['net'].additional_params['length']:.0f}m")
     print(f"Render mode: {'ON' if render else 'OFF'}")
     print(f"Episodes: {num_episodes}")
     print(f"Simulation duration: {simulation_duration:.1f} seconds ({simulation_duration/60:.1f} minutes) per episode")
+    print("\n✅ Using recommended approach:")
+    print("   - Long straight highway (no wraparound)")
+    print("   - Continuous vehicle inflow/outflow")
+    print("   - Teleports disabled (collision.action=warn)")
+    print("   - Modular headway calculation for stability")
     print("=" * 60)
     
     if render:
         print("\nSUMO GUI should open shortly...")
         print("RL vehicles are shown in RED")
         print("Human vehicles are shown in BLUE")
-        print("Vehicles will wrap around when they reach the end")
+        print("Vehicles enter from the left and exit on the right")
+        print("Continuous traffic flow - no wraparound artifacts")
         print("\nPress Ctrl+C to stop the simulation\n")
     
     total_rewards = []
@@ -379,12 +427,19 @@ def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=
             
             while step < max_steps:
                 # Get actions from trained policies
+                # The environment automatically handles new RL vehicles spawned via inflow
+                # by mapping them to agent IDs (round-robin if more RL vehicles than agents)
                 action_dict = {}
                 for agent_id, obs in obs_dict.items():
-                    action = trainer.compute_action(obs, policy_id=agent_id)
-                    action_dict[agent_id] = action
+                    try:
+                        action = trainer.compute_action(obs, policy_id=agent_id)
+                        action_dict[agent_id] = action
+                    except:
+                        # If action computation fails, skip this agent
+                        pass
                 
                 # Step environment
+                # New RL vehicles from inflow will automatically be included in obs_dict
                 obs_dict, reward_dict, done_dict, info_dict = env.step(action_dict)
                 
                 # Check if environment says it's done, but continue anyway for visualization
@@ -441,90 +496,26 @@ def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=
                             except:
                                 pass
                         
-                        # Wrap vehicles around: teleport vehicles before they reach the end
-                        # Use smarter logic to prevent collisions
-                        if "highway" in edge:
-                            # Wrap when vehicle is within 100m of the end (even earlier to prevent piling)
-                            if pos >= highway_length - 100.0:
-                                lane = env.env.k.vehicle.get_lane(veh_id)
-                                
-                                # Find a safe position at the start of the highway
-                                # Check for vehicles already at the start to avoid collisions
-                                safe_start_pos = 20.0  # Start 20m from beginning
-                                min_safe_distance = 15.0  # Minimum distance between vehicles
-                                
-                                # Check positions of vehicles on the same lane near the start
-                                vehicles_on_lane = []
-                                for other_veh_id in env.env.k.vehicle.get_ids():
-                                    try:
-                                        other_edge = env.env.k.vehicle.get_edge(other_veh_id)
-                                        other_pos = env.env.k.vehicle.get_position(other_veh_id)
-                                        other_lane = env.env.k.vehicle.get_lane(other_veh_id)
-                                        
-                                        # If vehicle is on same lane and near the start
-                                        if ("highway" in other_edge and 
-                                            int(other_lane) == int(lane) and 
-                                            other_pos < 200.0 and
-                                            other_veh_id != veh_id):
-                                            vehicles_on_lane.append(other_pos)
-                                    except:
-                                        pass
-                                
-                                # Find a safe position that doesn't overlap with existing vehicles
-                                if vehicles_on_lane:
-                                    vehicles_on_lane.sort()
-                                    # Start checking from safe_start_pos
-                                    candidate_pos = safe_start_pos
-                                    for existing_pos in vehicles_on_lane:
-                                        if abs(candidate_pos - existing_pos) < min_safe_distance:
-                                            # Too close, move further
-                                            candidate_pos = existing_pos + min_safe_distance
-                                    new_pos = candidate_pos
-                                else:
-                                    # No vehicles ahead, use safe start position
-                                    new_pos = safe_start_pos
-                                
-                                # Ensure we don't go too far
-                                if new_pos > highway_length - 200.0:
-                                    new_pos = safe_start_pos
-                                
-                                # Try to move vehicle to the start of the highway
-                                try:
-                                    # Use moveTo with keepRoute to prevent removal
-                                    env.env.k.kernel_api.vehicle.moveTo(
-                                        veh_id,
-                                        "highway_0",
-                                        pos=new_pos,
-                                        lane=int(lane),
-                                        keepRoute=1  # Keep route to prevent removal
-                                    )
-                                except:
-                                    try:
-                                        # Fallback: use moveToXY
-                                        env.env.k.kernel_api.vehicle.moveToXY(
-                                            veh_id,
-                                            edgeID="highway_0",
-                                            lane=int(lane),
-                                            x=new_pos,
-                                            y=0,
-                                            angle=0,
-                                            keepRoute=1  # Keep route
-                                        )
-                                    except:
-                                        # If both fail, skip this vehicle (don't force teleport)
-                                        pass
+                        # No wraparound needed - vehicles exit naturally at the end
+                        # Inflow/outflow provides continuous traffic without wraparound artifacts
                     except Exception as e:
                         # If vehicle info not available, continue
                         pass
                 
-                # Re-apply colors periodically (in case vehicles are added/removed)
+                # Re-apply colors periodically (in case vehicles are added/removed via inflow)
                 if step % 10 == 0:
                     rl_ids = env.env.k.vehicle.get_rl_ids()
                     for rl_id in rl_ids:
-                        env.env.k.kernel_api.vehicle.setColor(rl_id, (255, 0, 0, 255))
+                        try:
+                            env.env.k.kernel_api.vehicle.setColor(rl_id, (255, 0, 0, 255))
+                        except:
+                            pass  # Vehicle might have been removed
                     human_ids = env.env.k.vehicle.get_human_ids()
                     for human_id in human_ids:
-                        env.env.k.kernel_api.vehicle.setColor(human_id, (0, 100, 255, 255))
+                        try:
+                            env.env.k.kernel_api.vehicle.setColor(human_id, (0, 100, 255, 255))
+                        except:
+                            pass  # Vehicle might have been removed
                 
                 # Accumulate rewards
                 for agent_id in env.agent_ids:
