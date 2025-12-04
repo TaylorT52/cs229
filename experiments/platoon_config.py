@@ -47,7 +47,7 @@ additional_net_params = dict(
 env_params = EnvParams(
     horizon=1500,
     additional_params={
-        "lane_change_enabled": False,  # Set to True to enable lane changes
+        "lane_change_enabled": True,  # Set to True to enable lane changes
         "lane_change_duration": 5.0,   # Cooldown between lane changes (seconds)
     }
 )
