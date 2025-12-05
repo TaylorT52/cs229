@@ -1,13 +1,3 @@
-"""Comprehensive metrics collection for platooning evaluation.
-
-Collects all metrics required for CS229 project evaluation:
-- Spacing stability (variance, damping ratio, oscillations)
-- Efficiency (velocity, throughput)
-- Safety (collisions, TTC)
-- Coordination quality
-- Training convergence
-"""
-
 import numpy as np
 import pandas as pd
 from collections import defaultdict
@@ -17,48 +7,21 @@ import os
 
 
 class MetricsCollector:
-    """Collects and computes metrics during simulation."""
-    
     def __init__(self, policy_type: str = "unknown"):
-        """
-        Args:
-            policy_type: "ctde" or "independent" or "unknown"
-        """
         self.policy_type = policy_type
-        
-        # Raw data storage (per step)
+
         self.step_data = []
-        
-        # Aggregated metrics
         self.metrics = defaultdict(list)
-        
-        # Per-vehicle tracking
         self.vehicle_history = defaultdict(list)
-        
-        # Collision tracking
         self.collisions = []
         self.near_collisions = []
-        
-        # Action tracking (for coordination metrics)
         self.action_history = defaultdict(list)
-        
-        # Disturbance tracking
         self.disturbance_applied = False
         self.disturbance_time = None
         
     def collect_step(self, env, action_dict: Dict, reward_dict: Dict, step: int, time: float):
-        """Collect data for one simulation step.
-        
-        Args:
-            env: MultiAgentPlatoonEnv instance
-            action_dict: Dictionary of actions per agent
-            reward_dict: Dictionary of rewards per agent
-            step: Current step number
-            time: Current simulation time (seconds)
-        """
-        k = env.env.k  # Flow kernel
-        
-        # Get all RL vehicles
+        k = env.env.k 
+    
         rl_ids = sorted(k.vehicle.get_rl_ids())
         human_ids = sorted(k.vehicle.get_human_ids())
         all_ids = rl_ids + human_ids
@@ -73,7 +36,6 @@ class MetricsCollector:
             "num_human_vehicles": len(human_ids),
         }
         
-        # Per-vehicle data
         rl_data = {}
         for veh_id in rl_ids:
             try:
@@ -83,23 +45,21 @@ class MetricsCollector:
                 leader = k.vehicle.get_leader(veh_id)
                 headway = k.vehicle.get_headway(veh_id) if leader else None
                 
-                # Compute acceleration (derivative of speed)
                 if veh_id in self.vehicle_history:
                     prev_speed = self.vehicle_history[veh_id][-1].get("speed", speed)
-                    dt = 0.1  # Simulation step size
+                    dt = 0.1
                     acceleration = (speed - prev_speed) / dt
                 else:
                     acceleration = 0.0
-                
-                # Compute Time-To-Collision (TTC)
+
                 ttc = None
                 if leader and headway is not None and headway > 0:
                     leader_speed = k.vehicle.get_speed(leader)
                     relative_speed = speed - leader_speed
-                    if relative_speed > 0:  # Approaching
+                    if relative_speed > 0:
                         ttc = headway / relative_speed
                     else:
-                        ttc = float('inf')  # Not approaching
+                        ttc = float('inf')
                 
                 veh_record = {
                     "veh_id": veh_id,
@@ -114,9 +74,7 @@ class MetricsCollector:
                 
                 rl_data[veh_id] = veh_record
                 self.vehicle_history[veh_id].append(veh_record)
-                
-                # Track actions
-                # Map vehicle to agent ID
+
                 agent_idx = rl_ids.index(veh_id)
                 agent_id = f"agent_{agent_idx}"
                 if agent_id in action_dict:
@@ -127,7 +85,6 @@ class MetricsCollector:
                         self.action_history[veh_id].append([float(action)])
                 
             except Exception as e:
-                # Vehicle might have been removed
                 continue
         
         step_record["rl_vehicles"] = rl_data
@@ -135,8 +92,7 @@ class MetricsCollector:
         step_record["actions"] = action_dict.copy()
         
         self.step_data.append(step_record)
-        
-        # Check for collisions (headway < 0 or very small)
+    
         for veh_id, data in rl_data.items():
             if data["headway"] < 0:
                 self.collisions.append({
@@ -145,7 +101,7 @@ class MetricsCollector:
                     "veh_id": veh_id,
                     "headway": data["headway"]
                 })
-            elif data["headway"] < 2.0:  # Near collision
+            elif data["headway"] < 2.0:
                 self.near_collisions.append({
                     "step": step,
                     "time": time,
@@ -158,7 +114,6 @@ class MetricsCollector:
         if len(self.step_data) == 0:
             return {}
         
-        # Extract spacing (headway) for all RL vehicles over time
         spacing_history = defaultdict(list)
         
         for step_record in self.step_data:
@@ -169,37 +124,29 @@ class MetricsCollector:
         
         if len(spacing_history) == 0:
             return {}
-        
-        # Per-vehicle spacing variance
+    
         spacing_variances = {}
         for veh_id, spacings in spacing_history.items():
             if len(spacings) > 1:
                 spacing_variances[veh_id] = np.var(spacings)
         
-        # Average spacing variance across platoon
         avg_spacing_variance = np.mean(list(spacing_variances.values())) if spacing_variances else 0.0
-        
-        # Spacing oscillation amplitude (peak-to-peak)
         oscillation_amplitudes = {}
         for veh_id, spacings in spacing_history.items():
-            if len(spacings) > 10:  # Need enough data
+            if len(spacings) > 10:
                 oscillation_amplitudes[veh_id] = np.max(spacings) - np.min(spacings)
         
         avg_oscillation_amplitude = np.mean(list(oscillation_amplitudes.values())) if oscillation_amplitudes else 0.0
-        
-        # Damping ratio (simplified: ratio of consecutive peaks)
-        # This is a simplified metric - full damping ratio requires frequency analysis
+
         damping_ratios = []
         for veh_id, spacings in spacing_history.items():
             if len(spacings) > 20:
-                # Find local maxima (peaks)
                 peaks = []
                 for i in range(1, len(spacings) - 1):
                     if spacings[i] > spacings[i-1] and spacings[i] > spacings[i+1]:
                         peaks.append(spacings[i])
                 
                 if len(peaks) >= 2:
-                    # Compute decay rate between consecutive peaks
                     decay_rates = []
                     for i in range(len(peaks) - 1):
                         if peaks[i] > 0:
@@ -207,7 +154,6 @@ class MetricsCollector:
                             decay_rates.append(decay)
                     
                     if decay_rates:
-                        # Damping ratio approximation
                         avg_decay = np.mean(decay_rates)
                         damping_ratios.append(avg_decay)
         
@@ -223,11 +169,9 @@ class MetricsCollector:
         }
     
     def compute_efficiency_metrics(self) -> Dict:
-        """Compute efficiency metrics."""
         if len(self.step_data) == 0:
             return {}
         
-        # Extract speeds for all RL vehicles
         speeds = []
         for step_record in self.step_data:
             for veh_id, veh_data in step_record["rl_vehicles"].items():
@@ -240,9 +184,7 @@ class MetricsCollector:
         
         avg_velocity = np.mean(speeds)
         speed_variance = np.var(speeds)
-        
-        # Throughput: vehicles per unit time
-        # Count unique vehicles that passed through
+      
         total_time = self.step_data[-1]["time"] - self.step_data[0]["time"] if len(self.step_data) > 1 else 0.0
         unique_vehicles = set()
         for step_record in self.step_data:
@@ -263,7 +205,6 @@ class MetricsCollector:
         collision_count = len(self.collisions)
         near_collision_count = len(self.near_collisions)
         
-        # Minimum TTC across all vehicles and time
         min_ttcs = []
         for step_record in self.step_data:
             for veh_id, veh_data in step_record["rl_vehicles"].items():
@@ -272,14 +213,12 @@ class MetricsCollector:
                     min_ttcs.append(ttc)
         
         min_ttc = min(min_ttcs) if min_ttcs else float('inf')
-        
-        # Maximum deceleration spikes (jerk analysis)
+
         max_decelerations = []
         for veh_id, history in self.vehicle_history.items():
             accelerations = [h["acceleration"] for h in history if "acceleration" in h]
             if len(accelerations) > 1:
-                # Compute jerk (derivative of acceleration)
-                jerks = np.diff(accelerations) / 0.1  # dt = 0.1s
+                jerks = np.diff(accelerations) / 0.1 
                 max_decel = min(accelerations) if accelerations else 0.0
                 max_decelerations.append(max_decel)
         
@@ -290,27 +229,22 @@ class MetricsCollector:
             "near_collision_count": near_collision_count,
             "min_time_to_collision": min_ttc if min_ttc != float('inf') else None,
             "max_deceleration": max_deceleration,
-            "collision_details": self.collisions[:10],  # First 10 collisions
+            "collision_details": self.collisions[:10],
         }
     
     def compute_coordination_metrics(self) -> Dict:
-        """Compute coordination quality metrics."""
         if len(self.action_history) == 0:
             return {}
-        
-        # Action correlation between agents
-        # Extract action sequences for each vehicle
+
         action_sequences = {}
         for veh_id, actions in self.action_history.items():
             if len(actions) > 0:
-                # Flatten to acceleration only (first element)
                 accel_sequence = [a[0] if isinstance(a, (list, np.ndarray)) and len(a) > 0 else float(a) for a in actions]
                 action_sequences[veh_id] = accel_sequence
         
         if len(action_sequences) < 2:
             return {}
         
-        # Compute pairwise correlations
         correlations = []
         veh_ids = list(action_sequences.keys())
         for i in range(len(veh_ids)):
@@ -318,7 +252,6 @@ class MetricsCollector:
                 seq1 = action_sequences[veh_ids[i]]
                 seq2 = action_sequences[veh_ids[j]]
                 
-                # Align sequences (take minimum length)
                 min_len = min(len(seq1), len(seq2))
                 if min_len > 10:
                     seq1_aligned = seq1[:min_len]
@@ -329,13 +262,11 @@ class MetricsCollector:
         
         avg_correlation = np.mean(correlations) if correlations else 0.0
         
-        # Policy divergence (variance of actions across agents at each step)
         action_variances = []
         for step_record in self.step_data:
             actions = []
             for veh_id in step_record["rl_vehicles"].keys():
                 if veh_id in self.action_history and len(self.action_history[veh_id]) > 0:
-                    # Get action for this step
                     step_idx = len(self.action_history[veh_id]) - 1
                     if step_idx >= 0:
                         action = self.action_history[veh_id][step_idx]
@@ -347,14 +278,12 @@ class MetricsCollector:
         
         avg_action_variance = np.mean(action_variances) if action_variances else 0.0
         
-        # Synchronization index (how aligned vehicles are in speed)
         speed_alignments = []
         for step_record in self.step_data:
             speeds = [veh_data["speed"] for veh_data in step_record["rl_vehicles"].values()]
             if len(speeds) > 1:
-                # Coefficient of variation (lower = more synchronized)
                 cv = np.std(speeds) / max(np.mean(speeds), 1e-3)
-                speed_alignments.append(1.0 / (1.0 + cv))  # Normalize to [0, 1]
+                speed_alignments.append(1.0 / (1.0 + cv))
         
         avg_synchronization = np.mean(speed_alignments) if speed_alignments else 0.0
         
@@ -374,8 +303,7 @@ class MetricsCollector:
         if len(self.step_data) == 0:
             return {}
         
-        # Extract spacing errors (deviation from target spacing)
-        target_spacing = 20.0  # Target headway (meters)
+        target_spacing = 20.0
         spacing_errors = defaultdict(list)
         
         for step_record in self.step_data:
@@ -389,7 +317,6 @@ class MetricsCollector:
         if len(spacing_errors) < 2:
             return {}
         
-        # Compute error ratios between consecutive vehicles
         rl_ids = sorted(spacing_errors.keys())
         string_stability_ratios = []
         
@@ -399,14 +326,11 @@ class MetricsCollector:
             
             errors_i = spacing_errors[veh_i]
             errors_i1 = spacing_errors[veh_i1]
-            
-            # Align sequences
+        
             min_len = min(len(errors_i), len(errors_i1))
             if min_len > 10:
                 errors_i_aligned = errors_i[:min_len]
                 errors_i1_aligned = errors_i1[:min_len]
-                
-                # Compute ratio of norms
                 norm_i = np.linalg.norm(errors_i_aligned)
                 norm_i1 = np.linalg.norm(errors_i1_aligned)
                 
@@ -415,7 +339,7 @@ class MetricsCollector:
                     string_stability_ratios.append(ratio)
         
         avg_ratio = np.mean(string_stability_ratios) if string_stability_ratios else 1.0
-        is_string_stable = bool(avg_ratio < 1.0)  # Convert to native Python bool
+        is_string_stable = bool(avg_ratio < 1.0) 
         
         return {
             "string_stability_ratio": float(avg_ratio),
@@ -443,7 +367,6 @@ class MetricsCollector:
         """Save metrics to JSON file."""
         metrics = self.compute_all_metrics()
         
-        # Convert numpy types to native Python types for JSON serialization
         def convert_to_serializable(obj):
             if isinstance(obj, (np.integer, np.int_, np.intc, np.intp, np.int8, np.int16, np.int32, np.int64)):
                 return int(obj)
@@ -471,7 +394,6 @@ class MetricsCollector:
         if len(self.step_data) == 0:
             return
         
-        # Flatten step data
         rows = []
         for step_record in self.step_data:
             base_row = {
@@ -480,7 +402,6 @@ class MetricsCollector:
                 "num_rl_vehicles": step_record["num_rl_vehicles"],
             }
             
-            # Add per-vehicle data
             for veh_id, veh_data in step_record["rl_vehicles"].items():
                 row = base_row.copy()
                 row["veh_id"] = veh_id
