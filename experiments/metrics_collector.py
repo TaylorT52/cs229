@@ -110,7 +110,6 @@ class MetricsCollector:
                 })
     
     def compute_spacing_metrics(self) -> Dict:
-        """Compute spacing stability metrics."""
         if len(self.step_data) == 0:
             return {}
         
@@ -201,7 +200,6 @@ class MetricsCollector:
         }
     
     def compute_safety_metrics(self) -> Dict:
-        """Compute safety metrics."""
         collision_count = len(self.collisions)
         near_collision_count = len(self.near_collisions)
         
@@ -387,7 +385,7 @@ class MetricsCollector:
         with open(filepath, 'w') as f:
             json.dump(metrics_serializable, f, indent=2)
         
-        print(f"✅ Metrics saved to {filepath}")
+        print(f"Metrics saved to {filepath}")
     
     def save_raw_data(self, filepath: str):
         """Save raw step-by-step data to CSV."""
@@ -415,5 +413,5 @@ class MetricsCollector:
         
         df = pd.DataFrame(rows)
         df.to_csv(filepath, index=False)
-        print(f"✅ Raw data saved to {filepath}")
+        print(f"Raw data saved to {filepath}")
 

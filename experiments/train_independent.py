@@ -1,9 +1,3 @@
-"""Train independent PPO policies for multi-agent platooning.
-
-Each RL vehicle gets its own policy and reward signal, using the same
-reward system as CTDE (IndependentPlatoonEnv).
-"""
-
 import copy
 import os
 import numpy as np
@@ -33,25 +27,21 @@ def main():
 
     ray.init(ignore_reinit_error=True, include_dashboard=False, log_to_driver=False)
 
-    # Check if lane changes are enabled to determine observation space
     lane_change_enabled = params["env"].additional_params.get("lane_change_enabled", False)
     if lane_change_enabled:
-        num_features = 18  # 9 longitudinal + 9 lateral
+        num_features = 18 
     else:
-        num_features = 9  # 9 longitudinal features only
+        num_features = 9 
     
     obs_space = Box(low=-np.inf, high=np.inf, shape=(num_features,), dtype=np.float32)
     
-    # Check if lane changes are enabled
     if lane_change_enabled:
-        # Actions: [accel, lane_change] per agent
         act_space = Box(
             low=np.array([-3.0, -1.0], dtype=np.float32),
             high=np.array([3.0, 1.0], dtype=np.float32),
             dtype=np.float32
         )
     else:
-        # Just acceleration
         act_space = Box(low=-3.0, high=3.0, shape=(1,), dtype=np.float32)
 
     num_agents = params["veh"].num_rl_vehicles
@@ -75,7 +65,7 @@ def main():
         "sim_params": params["sim"],
         "network": network,
         "simulator": "traci",
-        "use_ctde_obs": False,  # Independent learning uses Box, not Dict
+        "use_ctde_obs": False,
     }
 
     config = ppo.DEFAULT_CONFIG.copy()
@@ -90,11 +80,10 @@ def main():
                 "policies_to_train": list(policies.keys()),
                 "count_steps_by": "agent_steps",
             },
-            # PPO hyperparameters (matching CTDE)
             "lr": 3e-4,
             "gamma": 0.99,
             "lambda": 0.95,
-            "clip_param": 0.1,  # Reduced from 0.2 for more stable learning with high-variance lane changes
+            "clip_param": 0.1, 
             "num_sgd_iter": 10,
             "sgd_minibatch_size": 128,
             "train_batch_size": 4000,
@@ -130,7 +119,6 @@ def main():
 
     print("\nIndependent training complete!")
     ray.shutdown()
-
 
 if __name__ == "__main__":
     main()

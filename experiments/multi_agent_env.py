@@ -1,64 +1,26 @@
-"""Multi-agent wrapper for IndependentPlatoonEnv to work with RLlib's multi-agent API.
-
-This wrapper converts IndependentPlatoonEnv (which returns flat observations and 
-per-agent reward dicts) into the format expected by RLlib for independent multi-agent learning.
-
-Supports both independent learning (Box observations) and CTDE (Dict observations with local/global).
-"""
-
 import numpy as np
 from gym.spaces import Box, Dict
 from ray.rllib.env.multi_agent_env import MultiAgentEnv as RLlibMultiAgentEnv
-
 from independent_env import IndependentPlatoonEnv
 
-
 class MultiAgentPlatoonEnv(RLlibMultiAgentEnv):
-    """Wrapper that converts IndependentPlatoonEnv to RLlib's multi-agent format.
-    
-    This enables independent PPO training where each RL vehicle is treated
-    as a separate agent with its own policy and receives individual rewards.
-    """
-    
     def __init__(self, env_config):
-        """Initialize the multi-agent environment.
-        
-        Args:
-            env_config: Dictionary containing Flow parameters:
-                - env_params: EnvParams object
-                - sim_params: SumoParams object  
-                - network: Network object
-                - simulator: 'traci' (default)
-                - use_ctde_obs: If True, return Dict observations with "local" and "global" keys (for CTDE)
-                                If False, return Box observations (for independent learning, default)
-        """
         super().__init__()
         
-        # Create the underlying Flow environment (with per-agent rewards)
         self.env = IndependentPlatoonEnv(
             env_params=env_config['env_params'],
             sim_params=env_config['sim_params'],
             network=env_config['network'],
             simulator=env_config.get('simulator', 'traci')
         )
-        
-        # Number of RL vehicles (agents)
+
         self.num_agents = self.env.initial_vehicles.num_rl_vehicles
-        # Features per agent (depends on whether lane changes are enabled)
         self.num_features = self.env.num_features
-        
-        # Create agent IDs: "agent_0", "agent_1", ..., "agent_9"
         self.agent_ids = [f"agent_{i}" for i in range(self.num_agents)]
-        
-        # Check if lane changes are enabled
         self.lane_change_enabled = env_config['env_params'].additional_params.get("lane_change_enabled", False)
-        
-        # Check if CTDE observation format should be used
         self.use_ctde_obs = env_config.get("use_ctde_obs", False)
-        
-        # Store observation and action spaces (same for all agents)
+
         if self.use_ctde_obs:
-            # CTDE: Dict with local and global observations
             self._obs_space = Dict({
                 "local": Box(
                     low=-np.inf, 
@@ -74,17 +36,14 @@ class MultiAgentPlatoonEnv(RLlibMultiAgentEnv):
                 ),
             })
         else:
-            # Independent learning: Box observations
             self._obs_space = Box(
                 low=-np.inf, 
                 high=np.inf, 
                 shape=(self.num_features,),
                 dtype=np.float32
             )
-        
-        # Action space depends on whether lane changes are enabled
+    
         if self.lane_change_enabled:
-            # Actions: [accel, lane_change] per agent
             self._action_space = Box(
                 low=np.array([-3.0, -1.0], dtype=np.float32),
                 high=np.array([3.0, 1.0], dtype=np.float32),
@@ -94,108 +53,49 @@ class MultiAgentPlatoonEnv(RLlibMultiAgentEnv):
             self._action_space = Box(
                 low=-3.0, 
                 high=3.0,
-                shape=(1,),  # Single continuous action per agent
+                shape=(1,),
                 dtype=np.float32
             )
     
     def reset(self):
-        """Reset the environment and return initial observations.
-        
-        Returns:
-            obs_dict: Dictionary mapping agent_id -> observation array
-        """
-        # Reset the underlying Flow environment
         flat_obs = self.env.reset()
-        
-        # Split flat observation into per-agent observations
         obs_dict = self._split_observations(flat_obs)
         
         return obs_dict
     
     def step(self, action_dict):
-        """Take a step in the environment.
-        
-        Args:
-            action_dict: Dictionary mapping agent_id -> action
-                Example: {"agent_0": [0.5], "agent_1": [-0.3], ...}
-        
-        Returns:
-            obs_dict: Dictionary of observations per agent
-            reward_dict: Dictionary of rewards per agent
-            done_dict: Dictionary of done flags (+ "__all__" key)
-            info_dict: Dictionary of info per agent
-        """
-        # Convert action dict to flat array for Flow environment
         flat_actions = self._flatten_actions(action_dict)
-        
-        # Step the underlying Flow environment
+
         flat_obs, flat_reward, done, info = self.env.step(flat_actions)
-        
-        # Split observations into per-agent format
         obs_dict = self._split_observations(flat_obs)
-        
-        # Split rewards into per-agent format
         reward_dict = self._split_rewards(flat_reward)
-        
-        # Create done dict (all agents done at same time in this env)
         done_dict = {agent_id: done for agent_id in self.agent_ids}
-        done_dict["__all__"] = done  # Required by RLlib
-        
-        # Create info dict (can add per-agent info if needed)
+        done_dict["__all__"] = done
         info_dict = {agent_id: {} for agent_id in self.agent_ids}
         
         return obs_dict, reward_dict, done_dict, info_dict
     
     def _split_observations(self, flat_obs):
-        """Split flat observation array into per-agent observations.
-        
-        Args:
-            flat_obs: Flat numpy array of shape (num_agents * num_features,)
-                Example: [speed_0, headway_0, ..., speed_1, headway_1, ...]
-        
-        Returns:
-            obs_dict: Dictionary mapping agent_id -> observation
-                If use_ctde_obs=True: Dict with "local" and "global" keys
-                If use_ctde_obs=False: Array of shape (num_features,)
-        """
         obs_dict = {}
-        
-        # Build global observation (concatenation of all agents' observations)
         global_obs = flat_obs.copy()
         
         for i, agent_id in enumerate(self.agent_ids):
-            # Extract the features for this agent
             start_idx = i * self.num_features
             end_idx = start_idx + self.num_features
             agent_obs = flat_obs[start_idx:end_idx]
             
             if self.use_ctde_obs:
-                # CTDE: Return Dict with local and global observations
                 obs_dict[agent_id] = {
-                    "local": agent_obs,  # Local observation for policy
-                    "global": global_obs  # Global observation for centralized critic
+                    "local": agent_obs,
+                    "global": global_obs
                 }
             else:
-                # Independent learning: Return Box observation
                 obs_dict[agent_id] = agent_obs
         
         return obs_dict
     
     def _flatten_actions(self, action_dict):
-        """Convert per-agent action dict to flat array for Flow environment.
-        
-        Args:
-            action_dict: Dictionary mapping agent_id -> action
-                If lane_change_enabled: {"agent_0": [accel, lc], "agent_1": [accel, lc], ...}
-                Otherwise: {"agent_0": [accel], "agent_1": [accel], ...}
-        
-        Returns:
-            flat_actions: Numpy array
-                If lane_change_enabled: shape (num_agents * 2,) with interleaved [accel_0, lc_0, accel_1, lc_1, ...]
-                Otherwise: shape (num_agents,) with [accel_0, accel_1, ...]
-        """
         if self.lane_change_enabled:
-            # Actions are interleaved: [accel_0, lc_0, accel_1, lc_1, ...]
             flat_actions = np.zeros(self.num_agents * 2, dtype=np.float32)
             
             for i, agent_id in enumerate(self.agent_ids):
@@ -203,22 +103,19 @@ class MultiAgentPlatoonEnv(RLlibMultiAgentEnv):
                     action = action_dict[agent_id]
                     if isinstance(action, (list, np.ndarray)):
                         if len(action) >= 2:
-                            flat_actions[i * 2] = action[0]  # acceleration
-                            flat_actions[i * 2 + 1] = action[1]  # lane change
+                            flat_actions[i * 2] = action[0]
+                            flat_actions[i * 2 + 1] = action[1]
                         elif len(action) == 1:
-                            flat_actions[i * 2] = action[0]  # acceleration only
-                            flat_actions[i * 2 + 1] = 0.0  # no lane change (for backward compatibility)
+                            flat_actions[i * 2] = action[0]
+                            flat_actions[i * 2 + 1] = 0.0
                     else:
-                        # Scalar action (from old policy trained without lane changes)
-                        flat_actions[i * 2] = float(action)  # acceleration
-                        flat_actions[i * 2 + 1] = 0.0  # no lane change (for backward compatibility)
+                        flat_actions[i * 2] = float(action)
+                        flat_actions[i * 2 + 1] = 0.0
         else:
-            # Just acceleration actions
             flat_actions = np.zeros(self.num_agents, dtype=np.float32)
             
             for i, agent_id in enumerate(self.agent_ids):
                 if agent_id in action_dict:
-                    # Extract scalar action (remove array wrapper if present)
                     action = action_dict[agent_id]
                     if isinstance(action, (list, np.ndarray)):
                         action = action[0]
@@ -227,68 +124,41 @@ class MultiAgentPlatoonEnv(RLlibMultiAgentEnv):
         return flat_actions
     
     def _split_rewards(self, reward_data):
-        """Convert Flow vehicle IDs to RLlib agent IDs for rewards.
-        
-        IndependentPlatoonEnv returns per-agent rewards as a dict with
-        vehicle IDs as keys (e.g., "rl_vehicle_0"). We need to map these
-        to agent IDs (e.g., "agent_0") for RLlib.
-        
-        Args:
-            reward_data: Dictionary mapping vehicle_id -> reward (from IndependentPlatoonEnv)
-                Example: {"rl_vehicle_0": 0.3, "rl_vehicle_1": -0.2, ...}
-        
-        Returns:
-            reward_dict: Dictionary mapping agent_id -> reward
-                Example: {"agent_0": 0.3, "agent_1": -0.2, ...}
-        """
-        # IndependentPlatoonEnv returns dict of per-agent rewards
         if isinstance(reward_data, dict):
-            # Get current RL vehicle IDs (sorted for consistency)
             rl_ids = sorted(self.env.k.vehicle.get_rl_ids())
-            
-            # Map vehicle IDs (Flow) to agent IDs (RLlib)
             reward_dict = {}
             for i, agent_id in enumerate(self.agent_ids):
                 if i < len(rl_ids):
                     veh_id = rl_ids[i]
-                    # Get this vehicle's individual reward
                     reward_dict[agent_id] = reward_data.get(veh_id, 0.0)
                 else:
                     reward_dict[agent_id] = 0.0
             
             return reward_dict
-        
-        # Handle scalar format (shouldn't happen with IndependentPlatoonEnv)
         else:
             reward_dict = {agent_id: reward_data for agent_id in self.agent_ids}
             return reward_dict
     
     def observation_space_sample(self, agent_ids=None):
-        """Return observation space for specified agents."""
         if agent_ids is None:
             agent_ids = self.agent_ids
         return {agent_id: self._obs_space for agent_id in agent_ids}
     
     def action_space_sample(self, agent_ids=None):
-        """Return action space for specified agents."""
         if agent_ids is None:
             agent_ids = self.agent_ids
         return {agent_id: self._action_space for agent_id in agent_ids}
     
     def observation_space_contains(self, x):
-        """Check if observation is valid."""
         return all(self._obs_space.contains(obs) for obs in x.values())
     
     def action_space_contains(self, x):
-        """Check if action is valid."""
         return all(self._action_space.contains(act) for act in x.values())
     
     @property
     def observation_space(self):
-        """Return observation space (per agent)."""
         return self._obs_space
     
     @property
     def action_space(self):
-        """Return action space (per agent)."""
         return self._action_space

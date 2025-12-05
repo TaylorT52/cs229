@@ -29,7 +29,7 @@ vehicles.add(
 
 additional_net_params = dict(
     length=1000,
-    lanes=4,  # Increased from 2 to 4 lanes
+    lanes=4,
     speed_limit=30.0,
     num_edges=1,
     use_ghost_edge=False,
@@ -37,7 +37,6 @@ additional_net_params = dict(
     boundary_cell_length=500,
 )
 
-#lane change support
 env_params = EnvParams(
     horizon=3000,
     additional_params={

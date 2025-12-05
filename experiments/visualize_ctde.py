@@ -6,7 +6,6 @@ import json
 from datetime import datetime
 import numpy as np
 
-# Add project root to path
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
@@ -30,41 +29,28 @@ from ctde_policy import CTDEModel
 
 
 def find_latest_checkpoint(results_dir=None):
-    """Find the latest checkpoint from CTDE training runs.
-    
-    Args:
-        results_dir: Directory to search for checkpoints. If None, uses results/ctde
-    
-    Returns:
-        tuple: (checkpoint_dir, checkpoint_num) or (None, None) if not found
-    """
     if results_dir is None:
         results_dir = os.path.join(project_root, "results", "ctde")
     
     if not os.path.exists(results_dir):
         return None, None
     
-    # Find all experiment directories
     exp_dirs = glob.glob(os.path.join(results_dir, "PPO_*"))
     if not exp_dirs:
         return None, None
     
-    # Get the most recent one
     latest_exp = max(exp_dirs, key=os.path.getmtime)
-    
-    # Find all trial directories
+
     trial_dirs = glob.glob(os.path.join(latest_exp, "PPO_*"))
     if not trial_dirs:
         return None, None
     
     latest_trial = max(trial_dirs, key=os.path.getmtime)
     
-    # Find all checkpoints
     checkpoint_dirs = glob.glob(os.path.join(latest_trial, "checkpoint_*"))
     if not checkpoint_dirs:
         return None, None
     
-    # Get the latest checkpoint
     latest_checkpoint = max(checkpoint_dirs, key=os.path.getmtime)
     checkpoint_num = int(os.path.basename(latest_checkpoint).split("_")[1])
     
@@ -72,33 +58,17 @@ def find_latest_checkpoint(results_dir=None):
 
 
 def load_trained_model(checkpoint_path, checkpoint_num=None):
-    """Load a trained CTDE PPO model from checkpoint.
-    
-    Args:
-        checkpoint_path: Path to checkpoint directory or trial directory
-        checkpoint_num: Checkpoint number to load (e.g., 30 for checkpoint_000030)
-                        If None, loads the latest checkpoint
-    
-    Returns:
-        PPOTrainer: Loaded trainer with trained policies
-    """
-    # Register CTDE model
     ModelCatalog.register_custom_model("ctde_torch_model", CTDEModel)
-    
-    # Check if checkpoint_path is already a checkpoint directory
     is_checkpoint_dir = os.path.basename(checkpoint_path).startswith("checkpoint_")
     
     if is_checkpoint_dir:
-        # checkpoint_path is already a checkpoint directory
         checkpoint_dir = checkpoint_path
         checkpoint_num = int(os.path.basename(checkpoint_dir).split("_")[1])
         checkpoint_file = os.path.join(checkpoint_dir, f"checkpoint-{checkpoint_num}")
     elif checkpoint_num is not None:
-        # checkpoint_path is a trial directory, construct checkpoint path
         checkpoint_dir = os.path.join(checkpoint_path, f"checkpoint_{checkpoint_num:06d}")
         checkpoint_file = os.path.join(checkpoint_dir, f"checkpoint-{checkpoint_num}")
     else:
-        # Find latest checkpoint in trial directory
         checkpoint_dirs = glob.glob(os.path.join(checkpoint_path, "checkpoint_*"))
         if not checkpoint_dirs:
             raise ValueError(f"No checkpoints found in {checkpoint_path}")
@@ -108,11 +78,7 @@ def load_trained_model(checkpoint_path, checkpoint_num=None):
     
     if not os.path.exists(checkpoint_file):
         raise ValueError(f"Checkpoint file not found: {checkpoint_file}")
-    
-    print(f"Loading checkpoint: {checkpoint_file}")
-    
-    # Load saved config from params.json (in trial directory)
-    # Find trial directory (parent of checkpoint directory)
+
     trial_dir = os.path.dirname(checkpoint_dir) if is_checkpoint_dir else checkpoint_path
     params_file = os.path.join(trial_dir, "params.json")
     
@@ -124,13 +90,11 @@ def load_trained_model(checkpoint_path, checkpoint_num=None):
     else:
         print(f"Warning: params.json not found at {params_file}, using defaults")
     
-    # Register environment
     def env_creator(env_config):
         return MultiAgentPlatoonEnv(env_config)
     
     register_env("platoon_ctde", env_creator)
     
-    # Create Flow network
     network = HighwayNetwork(
         name="highway",
         vehicles=flow_params["veh"],
@@ -143,18 +107,12 @@ def load_trained_model(checkpoint_path, checkpoint_num=None):
         "sim_params": flow_params["sim"],
         "network": network,
         "simulator": "traci",
-        "use_ctde_obs": True,  # Enable CTDE observation format
+        "use_ctde_obs": True,
     }
     
-    # Define observation and action spaces (CTDE uses Dict observations)
     num_agents = flow_params["veh"].num_rl_vehicles
-    
-    # Check if lane changes are enabled (must match training)
     lane_change_enabled = flow_params["env"].additional_params.get("lane_change_enabled", False)
     
-    # Features per agent MUST match training / PlatoonEnv.num_features:
-    #   - If lane_change_enabled=False: 9 longitudinal features
-    #   - If lane_change_enabled=True: 18 features (9 longitudinal + 9 lateral)
     if lane_change_enabled:
         num_features = 18
     else:
@@ -165,14 +123,12 @@ def load_trained_model(checkpoint_path, checkpoint_num=None):
         "global": Box(low=-np.inf, high=np.inf, shape=(num_agents * num_features,), dtype=np.float32),
     })
     if lane_change_enabled:
-        # Actions: [accel, lane_change] per agent
         act_space = Box(
             low=np.array([-3.0, -1.0], dtype=np.float32),
             high=np.array([3.0, 1.0], dtype=np.float32),
             dtype=np.float32
         )
     else:
-        # Just acceleration
         act_space = Box(
             low=-3.0, 
             high=3.0, 
@@ -180,7 +136,6 @@ def load_trained_model(checkpoint_path, checkpoint_num=None):
             dtype=np.float32
         )
     
-    # CTDE: All agents share the same policy
     shared_policy_config = {
         "model": {
             "custom_model": "ctde_torch_model",
@@ -200,14 +155,9 @@ def load_trained_model(checkpoint_path, checkpoint_num=None):
     def policy_mapping_fn(agent_id, episode, worker, **kwargs):
         """All agents use the shared policy (CTDE)."""
         return "shared_policy"
-    
-    # Create config - use saved config if available, otherwise use defaults
+
     config = ppo.DEFAULT_CONFIG.copy()
-    
-    # Extract model config from saved config
     model_config = saved_config.get("model", {})
-    
-    # Update with saved config values (prioritize saved config)
     config.update({
         "env": "platoon_ctde",
         "env_config": env_config,
@@ -219,10 +169,9 @@ def load_trained_model(checkpoint_path, checkpoint_num=None):
         "num_workers": 0,
         "framework": saved_config.get("framework", "torch"),
         "log_level": "ERROR",
-        "model": model_config,  # Use saved model architecture
+        "model": model_config,
     })
-    
-    # Copy other relevant config from saved config
+
     if "lr" in saved_config:
         config["lr"] = saved_config["lr"]
     if "gamma" in saved_config:
@@ -231,8 +180,7 @@ def load_trained_model(checkpoint_path, checkpoint_num=None):
         config["lambda"] = saved_config["lambda"]
     if "clip_param" in saved_config:
         config["clip_param"] = saved_config["clip_param"]
-    
-    # Create trainer and restore checkpoint
+
     trainer = ppo.PPOTrainer(config=config)
     trainer.restore(checkpoint_file)
     
@@ -241,139 +189,110 @@ def load_trained_model(checkpoint_path, checkpoint_num=None):
 
 
 def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=None):
-    """Run visualization with trained CTDE model.
-    
-    Args:
-        trainer: PPOTrainer with loaded CTDE policy
-        env_config: Environment configuration
-        render: Whether to show SUMO GUI
-        num_episodes: Number of episodes to run
-    """
-    # Create a copy of flow_params with realistic parameters for visualization
     from copy import deepcopy
     from flow.controllers import IDMController, RLController, ContinuousRouter, SimLaneChangeController
     from flow.core.params import VehicleParams
     
     vis_flow_params = deepcopy(flow_params)
-    
-    # For this run, enable lane changes to match CTDE lane-changing training
     vis_flow_params["env"].additional_params["lane_change_enabled"] = True
     
     if horizon is None:
-        horizon = 10000  # Much longer than default 1500
+        horizon = 10000
     vis_flow_params["env"].horizon = horizon
 
     original_speed_limit = flow_params["net"].additional_params.get("speed_limit", 30.0)
     speed_limit = 15.0  
  
-    # Use longer highway for realistic continuous traffic (recommended approach)
-    # This avoids wraparound issues and provides natural inflow/outflow
-    vis_flow_params["net"].additional_params["length"] = 3000  # 3km highway
+    vis_flow_params["net"].additional_params["length"] = 3000
     vis_flow_params["net"].additional_params["speed_limit"] = speed_limit
     
-    # Note: Collision parameters are set via TraCI after environment creation
-    # (see code below where we disable teleports)
-    
+
     human_cf_params = SumoCarFollowingParams(
-        accel=1.8,          # Moderate acceleration: 1.8 m/s² (realistic for normal driving)
-        decel=4.5,          # Realistic deceleration: 4.5 m/s² (comfortable braking)
-        sigma=0.2,           # Moderate imperfection: 0.2 (realistic driver variation)
-        tau=1.0,            # Reaction time: 1.0s (typical human reaction)
-        min_gap=4.0,        # Minimum gap: 4.0m (comfortable following distance - prevents collisions)
-        max_speed=speed_limit,  # Enforce speed limit
-        speed_factor=0.95,  # Slightly below speed limit (realistic)
-        speed_dev=0.05,     # 5% speed variation (normal traffic variation)
-        impatience=0.3,     # Moderate impatience: 0.3 (normal driving)
+        accel=1.8,
+        decel=4.5,
+        sigma=0.2, 
+        tau=1.0,
+        min_gap=4.0, 
+        max_speed=speed_limit, 
+        speed_factor=0.95,
+        speed_dev=0.05, 
+        impatience=0.3,
         car_follow_model="IDM",
-        speed_mode="obey_safe_speed",  # Obey safe speed - allows natural car-following
+        speed_mode="obey_safe_speed",
     )
     
     rl_cf_params = SumoCarFollowingParams(
-        accel=3.0,          # Better acceleration for autonomous
-        decel=5.0,          # Better deceleration
-        sigma=0.1,          # Lower imperfection
-        tau=0.5,            # Faster reaction: 0.5s
-        min_gap=2.0,        # Tighter gap
-        max_speed=speed_limit,  # Enforce speed limit
-        speed_factor=0.95,  # Slightly below speed limit
-        speed_dev=0.05,     # 5% speed variation
+        accel=3.0,  
+        decel=5.0,     
+        sigma=0.1,       
+        tau=0.5,         
+        min_gap=2.0,      
+        max_speed=speed_limit,  
+        speed_factor=0.95, 
         impatience=0.3,
         car_follow_model="IDM",
-        speed_mode="all_checks",  # Use all safety checks
+        speed_mode="all_checks", 
     )
     
-
-    # Use inflow/outflow for continuous realistic traffic (recommended approach)
-    # This avoids wraparound issues and provides natural traffic flow
     from flow.core.params import InFlows
     
     vis_vehicles = VehicleParams()
-    # Start with fewer initial vehicles - inflow will add more continuously
     vis_vehicles.add(
         veh_id="human",
         acceleration_controller=(IDMController, {
-            "v0": speed_limit * 0.95,  # Desired speed slightly below limit (realistic)
-            "T": 1.8,                  # Safe time headway: 1.8s (comfortable following - prevents tailgating)
-            "a": 1.8,                  # Max acceleration: 1.8 m/s² (moderate)
-            "b": 4.5,                  # Comfortable deceleration: 4.5 m/s² (matches SumoCarFollowingParams)
-            "delta": 4,                 # Acceleration exponent (standard)
-            "s0": 4.0,                  # Minimum gap: 4.0m (safe distance - prevents collisions)
-            "noise": 0.05,              # Small noise for natural variation
+            "v0": speed_limit * 0.95, 
+            "T": 1.8,           
+            "a": 1.8,                
+            "b": 4.5,                 
+            "delta": 4,             
+            "s0": 4.0,              
+            "noise": 0.05,             
         }),
         routing_controller=(ContinuousRouter, {}),
         car_following_params=human_cf_params,
-        num_vehicles=5,  # Fewer initial vehicles - reduced to prevent initial congestion
+        num_vehicles=5,  
         color="0,100,255",
     )
     vis_vehicles.add(
         veh_id="rl",
         acceleration_controller=(RLController, {}),
         routing_controller=(ContinuousRouter, {}),
-        # RL controls lane changes during visualization as well
         lane_change_controller=(SimLaneChangeController, {}),
         car_following_params=rl_cf_params,
         num_vehicles=flow_params["veh"].num_rl_vehicles,
         color="255,0,0",
     )
     
-    # Add continuous inflow of human and RL vehicles for realistic traffic
-    # Inflows are passed to NetParams, not to the Network constructor
     inflows = InFlows()
     inflows.add(
         veh_type="human",
         edge="highway_0",
-        vehs_per_hour=900,  # Slightly reduced to lessen congestion (~0.25 vehicles per second)
-        depart_speed="max",  # Use new parameter name (departSpeed is deprecated)
-        depart_lane="random",  # Use new parameter name (departLane is deprecated)
-        begin=1,  # Must be >= 1 second (Flow requirement)
-        end=horizon * 0.1,  # Continue for entire simulation duration
+        vehs_per_hour=900,  
+        depart_speed="max",  
+        depart_lane="random",
+        begin=1,  
+        end=horizon * 0.1,  
     )
-    # Add RL vehicles to inflow (30% of human flow for mixed traffic)
+
     inflows.add(
         veh_type="rl",
         edge="highway_0",
-        vehs_per_hour=270,  # Keep 30% of human inflow
+        vehs_per_hour=270,  
         depart_speed="max",
         depart_lane="random",
         begin=1,
         end=horizon * 0.1,
     )
     
-    # Add inflows to NetParams
+
     vis_flow_params["net"].inflows = inflows
-    
-    # Create environment with rendering enabled
-    # Need to create a new network for the visualization environment
-    # Use inflow/outflow for continuous realistic traffic
     network = HighwayNetwork(
         name="highway",
         vehicles=vis_vehicles,
         net_params=vis_flow_params["net"],
         initial_config=vis_flow_params["initial"],
     )
-    
-    # Ensure the horizon is properly set in env_params
-    # Create a fresh EnvParams with the updated horizon
+
     from flow.core.params import EnvParams
     updated_env_params = EnvParams(
         horizon=vis_flow_params["env"].horizon,
@@ -387,7 +306,7 @@ def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=
         "sim_params": vis_flow_params["sim"],
         "network": network,
         "simulator": "traci",
-        "use_ctde_obs": True,  # Enable CTDE observation format
+        "use_ctde_obs": True, 
     }
     env_config_copy["sim_params"].render = render
     
@@ -395,26 +314,22 @@ def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=
     
     env = MultiAgentPlatoonEnv(env_config_copy)
     
-    # Disable collision teleportation - keep vehicles at collision locations
-    # Set collision.action to "warn" so vehicles stay where they collide (critical for stable RL)
+   
     try:
         traci = env.env.k.kernel_api
-        # Set collision action to "warn" - vehicles will remain at collision location
-        # Options: "none" (keep vehicles), "warn" (warn but keep), "teleport" (default), "remove"
         traci.simulation.setParameter("", "collision.action", "warn")
         traci.simulation.setParameter("", "collision.stoptime", "10000")
-        print("✅ Collision teleportation disabled - vehicles will remain at collision locations")
+        print("Collision teleportation disabled - vehicles will remain at collision locations")
     except Exception as e:
         print(f"Warning: Could not set collision parameters: {e}")
         print("Attempting alternative method...")
         try:
-            # Alternative: set via sumoParams if available
             if hasattr(env.env.k.sim_params, 'additional_params'):
                 env.env.k.sim_params.additional_params['collision.action'] = 'warn'
         except:
             pass
     
-    simulation_duration = vis_flow_params["env"].horizon * 0.1  # Convert steps to seconds
+    simulation_duration = vis_flow_params["env"].horizon * 0.1
     
     print("=" * 60)
     print("Starting Visualization - Continuous Traffic Mode")
@@ -427,11 +342,6 @@ def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=
     print(f"Render mode: {'ON' if render else 'OFF'}")
     print(f"Episodes: {num_episodes}")
     print(f"Simulation duration: {simulation_duration:.1f} seconds ({simulation_duration/60:.1f} minutes) per episode")
-    print("\n✅ Using recommended approach:")
-    print("   - Long straight highway (no wraparound)")
-    print("   - Continuous vehicle inflow/outflow")
-    print("   - Teleports disabled (collision.action=warn)")
-    print("   - Modular headway calculation for stability")
     print("=" * 60)
     
     if render:
@@ -443,8 +353,6 @@ def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=
         print("\nPress Ctrl+C to stop the simulation\n")
     
     total_rewards = []
-    
-    # Initialize metrics collector
     metrics_collector = MetricsCollector(policy_type="ctde")
     
     try:
@@ -452,43 +360,30 @@ def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=
             obs_dict = env.reset()
             done_dict = {"__all__": False}
             episode_reward = {agent_id: 0.0 for agent_id in env.agent_ids}
-            
-            # Reset metrics collector for new episode
+        
             if episode > 0:
                 metrics_collector = MetricsCollector(policy_type="ctde")
-            
-            # Set vehicle colors explicitly for visibility
+
             rl_ids = env.env.k.vehicle.get_rl_ids()
             for rl_id in rl_ids:
-                env.env.k.kernel_api.vehicle.setColor(rl_id, (255, 0, 0, 255))  # Red for RL
+                env.env.k.kernel_api.vehicle.setColor(rl_id, (255, 0, 0, 255))
             
             human_ids = env.env.k.vehicle.get_human_ids()
             for human_id in human_ids:
-                env.env.k.kernel_api.vehicle.setColor(human_id, (0, 100, 255, 255))  # Blue for human
+                env.env.k.kernel_api.vehicle.setColor(human_id, (0, 100, 255, 255)) 
             
-            # Get highway length for wrap-around
             highway_length = vis_flow_params["net"].additional_params.get("length", 1000)
             
             max_steps = vis_flow_params["env"].horizon
             step = 0
             
             while step < max_steps:
-                # Get actions from trained policies
-                # The environment automatically handles new RL vehicles spawned via inflow
-                # by mapping them to agent IDs (round-robin if more RL vehicles than agents)
                 action_dict = {}
-                # Filter obs_dict to only include agents that exist in the environment
-                # This prevents errors when new RL vehicles spawn via inflow
                 current_rl_ids = env.env.k.vehicle.get_rl_ids()
                 for agent_id, obs in obs_dict.items():
                     try:
-                        # CTDE uses shared_policy for all agents
-                        # Observations are Dict with "local" and "global" keys
                         action = trainer.compute_action(obs, policy_id="shared_policy")
-
-                        # Match action format to env configuration
                         if env.lane_change_enabled:
-                            # Lane changes enabled: env expects [accel, lane_change]
                             if isinstance(action, np.ndarray):
                                 if action.shape == (2,) or len(action) == 2:
                                     action_dict[agent_id] = action
@@ -501,7 +396,6 @@ def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=
                             else:
                                 action_dict[agent_id] = np.array([float(action), 0.0], dtype=np.float32)
                         else:
-                            # Lane changes disabled: env expects scalar / 1D accel only
                             if isinstance(action, np.ndarray):
                                 if action.shape == (1,) or len(action) == 1:
                                     action_dict[agent_id] = float(action[0])
@@ -510,67 +404,45 @@ def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=
                             else:
                                 action_dict[agent_id] = float(action)
                     except Exception as e:
-                        # If action computation fails, skip this agent
-                        # This can happen when new vehicles spawn and observations don't match
-                        if step % 100 == 0:  # Only print occasionally to avoid spam
+                        if step % 100 == 0:
                             pass
                         pass
                 
-                # Step environment
-                # New RL vehicles from inflow will automatically be included in obs_dict
                 obs_dict, reward_dict, done_dict, info_dict = env.step(action_dict)
-                
-                # Collect metrics for this step
-                current_time = step * 0.1  # Simulation time in seconds
+
+                current_time = step * 0.1
                 metrics_collector.collect_step(env, action_dict, reward_dict, step, current_time)
                 
-                # Check if environment says it's done, but continue anyway for visualization
-                # (unless it's a crash or user interruption)
+        
                 if done_dict.get("__all__", False):
-                    # Check if it's just the horizon being reached
-                    # If so, we can continue by resetting or ignoring the done flag
-                    # For visualization, we want to run for the full duration
-                    if step < max_steps - 100:  # If we're not near the end, something else happened
+                    if step < max_steps - 100:  
                         print(f"Warning: Environment signaled done at step {step}, but continuing...")
-                    # Reset done flag to continue simulation
                     done_dict["__all__"] = False
                 
-                # Get speed limit
                 speed_limit = vis_flow_params["net"].additional_params.get("speed_limit", 30.0)
                 
-                # Enforce speed limits and wrap vehicles around
                 for veh_id in env.env.k.vehicle.get_ids():
                     try:
                         pos = env.env.k.vehicle.get_position(veh_id)
                         edge = env.env.k.vehicle.get_edge(veh_id)
                         speed = env.env.k.vehicle.get_speed(veh_id)
-                        
-                        # Only enforce speed limits on human vehicles (blue cars) - but be less aggressive
-                        # Let IDM controller do most of the work for natural behavior
                         is_human = veh_id in env.env.k.vehicle.get_human_ids()
                         
                         if is_human:
-                            # Only cap speed if it's way over the limit (let IDM handle normal behavior)
-                            # This allows natural acceleration/deceleration patterns
-                            if speed > speed_limit * 1.1:  # Only cap if 10% over limit
+                            if speed > speed_limit * 1.1: 
                                 try:
-                                    # Cap speed at the limit
                                     env.env.k.kernel_api.vehicle.setSpeed(veh_id, speed_limit)
                                 except:
                                     pass
-                            
-                            # Minimal intervention - let IDM controller handle car-following naturally
-                            # Only intervene in extreme cases to prevent crashes
+
                             try:
                                 leader = env.env.k.vehicle.get_leader(veh_id)
                                 if leader:
                                     headway = env.env.k.vehicle.get_headway(veh_id)
-                                    if headway is not None and headway < 2.0:  # Only if dangerously close
+                                    if headway is not None and headway < 2.0:
                                         leader_speed = env.env.k.vehicle.get_speed(leader)
-                                        # Emergency slow down only if very close and much faster
                                         if speed > leader_speed + 2.0:
                                             try:
-                                                # Emergency brake to prevent collision
                                                 target_speed = max(0, leader_speed - 1.0)
                                                 env.env.k.kernel_api.vehicle.setSpeed(veh_id, target_speed)
                                             except:
@@ -578,34 +450,28 @@ def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=
                             except:
                                 pass
                         
-                        # No wraparound needed - vehicles exit naturally at the end
-                        # Inflow/outflow provides continuous traffic without wraparound artifacts
                     except Exception as e:
-                        # If vehicle info not available, continue
                         pass
-                
-                # Re-apply colors periodically (in case vehicles are added/removed via inflow)
+
                 if step % 10 == 0:
                     rl_ids = env.env.k.vehicle.get_rl_ids()
                     for rl_id in rl_ids:
                         try:
                             env.env.k.kernel_api.vehicle.setColor(rl_id, (255, 0, 0, 255))
                         except:
-                            pass  # Vehicle might have been removed
+                            pass 
                     human_ids = env.env.k.vehicle.get_human_ids()
                     for human_id in human_ids:
                         try:
                             env.env.k.kernel_api.vehicle.setColor(human_id, (0, 100, 255, 255))
                         except:
-                            pass  # Vehicle might have been removed
+                            pass 
                 
-                # Accumulate rewards
                 for agent_id in env.agent_ids:
                     episode_reward[agent_id] += reward_dict.get(agent_id, 0.0)
                 
                 step += 1
                 
-                # Print progress every 100 steps
                 if step % 100 == 0:
                     avg_reward = np.mean([episode_reward[aid] for aid in env.agent_ids])
                     print(f"Episode {episode+1}, Step {step}: Avg reward = {avg_reward:.2f}")
@@ -625,15 +491,13 @@ def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=
         if total_rewards:
             print(f"Average reward across episodes: {np.mean(total_rewards):.2f}")
         
-        # Compute and save metrics
         print("\n" + "=" * 60)
         print("Computing Metrics...")
         print("=" * 60)
         
         all_metrics = metrics_collector.compute_all_metrics()
         
-        # Print summary
-        print("\n📊 Metrics Summary:")
+        print("\nMetrics Summary:")
         print(f"  Policy Type: {all_metrics['policy_type']}")
         
         spacing = all_metrics.get('spacing_stability', {})
@@ -667,7 +531,6 @@ def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=
             print(f"  String Stability Ratio: {string_stab.get('string_stability_ratio', 1.0):.4f}")
             print(f"  Is String Stable: {string_stab.get('is_string_stable', False)}")
         
-        # Save metrics to file
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         metrics_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "metrics")
         os.makedirs(metrics_dir, exist_ok=True)
@@ -678,7 +541,7 @@ def run_visualization(trainer, env_config, render=True, num_episodes=1, horizon=
         metrics_collector.save_metrics(metrics_file)
         metrics_collector.save_raw_data(raw_data_file)
         
-        print(f"\n✅ Metrics saved to:")
+        print(f"\nMetrics saved to:")
         print(f"   {metrics_file}")
         print(f"   {raw_data_file}")
 
@@ -725,12 +588,10 @@ def main():
     )
     
     args = parser.parse_args()
-    
-    # Initialize Ray
+
     ray.init(ignore_reinit_error=True, include_dashboard=False, log_to_driver=False)
     
     try:
-        # Find or use checkpoint
         if args.checkpoint_path is None:
             checkpoint_path, checkpoint_num = find_latest_checkpoint()
             if checkpoint_path is None:
@@ -742,10 +603,8 @@ def main():
             checkpoint_path = args.checkpoint_path
             checkpoint_num = args.checkpoint_num
         
-        # Load trained model
         trainer, env_config = load_trained_model(checkpoint_path, checkpoint_num)
-        
-        # Run visualization
+    
         run_visualization(
             trainer, 
             env_config, 

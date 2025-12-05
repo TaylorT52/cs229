@@ -5,7 +5,7 @@ from platoon_env import PlatoonEnv
 class IndependentPlatoonEnv(PlatoonEnv):
     def __init__(self, env_params, sim_params, network, simulator="traci"):
         super().__init__(env_params, sim_params, network, simulator)
-        self.prev_lanes = {}  # Track previous lanes for lane change detection
+        self.prev_lanes = {}
 
     def reset(self):
         self.prev_lanes.clear()
@@ -27,16 +27,12 @@ class IndependentPlatoonEnv(PlatoonEnv):
             headway = self._safe_headway(rl_id)
 
             agent_reward = 0.1
-
-            #speed reward / don't speed
             speed_ratio = speed / max(self.target_speed, 1e-3)
             if speed_ratio > 1.0:
                 speed_reward = -0.5 * (speed_ratio - 1.0)
             else:
-                speed_reward = speed_ratio - 1.0  # -1 at stopped, 0 at target
+                speed_reward = speed_ratio - 1.0 
             agent_reward += 0.3 * speed_reward
-
-            #following distance & platooning
             if headway is not None:
                 if 10.0 <= headway <= 30.0:
                     platoon_reward = 1.0
@@ -51,8 +47,6 @@ class IndependentPlatoonEnv(PlatoonEnv):
             else:
                 platoon_reward = 0.0
             agent_reward += 0.3 * platoon_reward
-
-            #stability / large lane changes
             if rl_id in self.prev_speeds:
                 prev_speed = self.prev_speeds[rl_id]
                 speed_change = abs(speed - prev_speed)
@@ -66,8 +60,6 @@ class IndependentPlatoonEnv(PlatoonEnv):
             elif headway is not None and headway < 8.0:
                 safety_penalty = -0.2 * (8.0 - headway) / 3.0
                 agent_reward += 0.15 * safety_penalty
-
-            #lane change penalty
             current_lane = self.k.vehicle.get_lane(rl_id)
             if rl_id in self.prev_lanes:
                 prev_lane = self.prev_lanes[rl_id]

@@ -1,9 +1,3 @@
-"""Plot training metrics from Ray Tune progress.csv files.
-
-This script reads training progress CSV files and generates plots
-for key metrics like episode reward, policy loss, value function loss, etc.
-"""
-
 import os
 import sys
 import pandas as pd
@@ -18,12 +12,10 @@ RESULTS_DIR = os.path.join(PROJECT_ROOT, "results")
 
 
 def find_latest_run(results_subdir="ctde"):
-    """Find the most recent training run in the results directory."""
     results_path = os.path.join(RESULTS_DIR, results_subdir)
     if not os.path.exists(results_path):
         return None
-    
-    # Find all experiment directories
+
     exp_dirs = []
     for item in os.listdir(results_path):
         item_path = os.path.join(results_path, item)
@@ -33,11 +25,8 @@ def find_latest_run(results_subdir="ctde"):
     if not exp_dirs:
         return None
     
-    # Sort by modification time, get most recent
     exp_dirs.sort(key=lambda x: os.path.getmtime(x), reverse=True)
     latest_dir = exp_dirs[0]
-    
-    # Find progress.csv in the subdirectory
     for root, dirs, files in os.walk(latest_dir):
         if "progress.csv" in files:
             return os.path.join(root, "progress.csv")
@@ -46,15 +35,11 @@ def find_latest_run(results_subdir="ctde"):
 
 
 def load_progress_csv(csv_path):
-    """Load and parse Ray Tune progress.csv file."""
     df = pd.read_csv(csv_path)
     
-    # Parse list columns (like hist_stats/episode_reward)
     for col in df.columns:
         if df[col].dtype == object:
-            # Try to parse as list
             try:
-                # Remove brackets and quotes, split by comma
                 df[col] = df[col].apply(
                     lambda x: eval(x) if isinstance(x, str) and x.startswith('[') else x
                 )
@@ -65,18 +50,8 @@ def load_progress_csv(csv_path):
 
 
 def plot_training_metrics(df, output_path=None, show_plot=True):
-    """Plot key training metrics from progress CSV.
-    
-    Creates Figure 1: Training Curves
-    - Episode Reward (main plot)
-    - KL Divergence (small subplot)
-    - Entropy (subplot)
-    """
-    
-    # Create figure with custom layout: main plot + 2 subplots
     fig = plt.figure(figsize=(12, 8))
     
-    # Main plot: Episode Reward (takes up most of the space)
     ax_main = plt.subplot(2, 1, 1)
     if 'episode_reward_mean' in df.columns:
         ax_main.plot(df['training_iteration'], df['episode_reward_mean'], 
@@ -93,14 +68,11 @@ def plot_training_metrics(df, output_path=None, show_plot=True):
     ax_main.legend(fontsize=10)
     ax_main.grid(True, alpha=0.3)
     
-    # Subplot 1: KL Divergence (small subplot)
     ax_kl = plt.subplot(2, 2, 3)
-    # Try CTDE format first (shared_policy), then independent format (agent_0, agent_1, etc.)
     kl_col = None
     if 'info/learner/shared_policy/learner_stats/kl' in df.columns:
         kl_col = 'info/learner/shared_policy/learner_stats/kl'
     else:
-        # Find first agent's KL (for independent training)
         for col in df.columns:
             if 'info/learner/agent_' in col and '/learner_stats/kl' in col:
                 kl_col = col
@@ -115,14 +87,11 @@ def plot_training_metrics(df, output_path=None, show_plot=True):
         ax_kl.set_title('KL Divergence', fontsize=11, fontweight='bold')
         ax_kl.grid(True, alpha=0.3)
     
-    # Subplot 2: Entropy
     ax_entropy = plt.subplot(2, 2, 4)
-    # Try CTDE format first (shared_policy), then independent format (agent_0, agent_1, etc.)
     entropy_col = None
     if 'info/learner/shared_policy/learner_stats/entropy' in df.columns:
         entropy_col = 'info/learner/shared_policy/learner_stats/entropy'
     else:
-        # Find first agent's entropy (for independent training)
         for col in df.columns:
             if 'info/learner/agent_' in col and '/learner_stats/entropy' in col:
                 entropy_col = col
@@ -181,8 +150,7 @@ def main():
             sys.exit(1)
     
     print(f"Loading training metrics from: {csv_path}")
-    
-    # Load and plot
+
     df = load_progress_csv(csv_path)
     print(f"Loaded {len(df)} training iterations")
     print(f"Training iterations: {df['training_iteration'].min():.0f} to {df['training_iteration'].max():.0f}")

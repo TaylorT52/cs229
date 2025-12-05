@@ -122,17 +122,14 @@ def main():
         "framework": framework,
     })
     
-    # Create trainer and restore
     print("\nLoading trained model...")
     trainer = ppo.PPOTrainer(config=config)
     trainer.restore(checkpoint_path)
     print("Model loaded successfully!")
     
-    # Create evaluation environment (with GUI)
     print("\nStarting simulation...")
     env = MultiAgentPlatoonEnv(create_env_config(render=True))
-    
-    # Run evaluation episodes
+
     num_episodes = 3
     
     for episode in range(num_episodes):
